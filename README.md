@@ -130,3 +130,76 @@ In the eval, such questions are expected to be `unanswerable`, and `run_eval.py`
 trusts `Answer.grounded` (from the three layers) — so both the distance-gate
 refusal and the marker-detected refusal score as a *correct refusal*. Refusing
 is the right outcome, not a failure.
+
+## Ingestion
+
+```
+python -m src.ingest                                   # append data/pdfs/ (default)
+python -m src.ingest --source path/to/folder           # append all PDFs in a folder
+python -m src.ingest --source path/to/file.pdf         # append a single PDF
+python -m src.ingest --clear [--source <path>]         # wipe the store, then ingest
+python -m src.ingest --list                            # show which sources are stored
+python -m src.ingest --analyze                         # chunk-only report (no embedding)
+```
+
+- **`--source <file-or-folder>`** — where to read PDFs from. Defaults to
+  `data/pdfs/` (or the `.env` `PDF_DIR`). A single `.pdf` ingests just that
+  file; a folder ingests every PDF inside it. The path must exist and contain
+  at least one PDF, otherwise ingestion fails with a clear error.
+- **Default = append.** New PDFs are added to whatever is already in the store,
+  so a corpus can grow across sessions. Unit 1 and Unit 2 ingested today and
+  Unit 3 tomorrow all remain searchable together:
+  ```bash
+  python -m src.ingest --source data/unit1   # day 1
+  python -m src.ingest --source data/unit2   # day 2: unit1 + unit2 stored
+  python -m src.ingest --source data/unit3   # day 3: unit1 + unit2 + unit3 stored
+  ```
+- **`--clear`** — wipes the existing collection completely *before* ingesting
+  the given source. Use this to switch subjects/corpora entirely rather than
+  add to the current one.
+- **`--list`** — prints the source filenames currently represented in the
+  store, so you can decide whether to append or clear.
+- **Duplicate guard.** On append, each PDF is matched against the store by
+  filename **and** a streaming content hash (`file_sha1`, stored in every
+  chunk's metadata). A file already present is skipped with an explicit
+  `Skipped: <name> (already in store, name + content-hash match)` line, so
+  accidentally re-running ingestion on an already-added unit adds no duplicate
+  chunks and can't skew retrieval.
+
+The chunking, embedding, and citation-metadata logic is unchanged by these
+modes — only *where* the chunks come from and *whether* the store is appended
+or rebuilt differs.
+
+## Project layout
+
+```
+ask-the-syllabus-bot/
+├── data/pdfs/                # your source syllabus/course PDFs go here
+├── src/
+│   ├── config.py             # shared env-driven configuration
+│   ├── ingest.py             # PDF -> chunks -> embed -> Chroma
+│   ├── retrieve.py           # embed query, similarity search
+│   ├── generate.py           # prompt + Ollama + relevance gate
+│   ├── citations.py          # chunk metadata -> readable citations
+│   └── cli.py                # interactive Q&A loop
+├── eval/
+│   ├── test_questions.json   # fixed eval set
+│   └── run_eval.py           # runs eval, reports grounded vs hallucinated
+├── vectorstore/              # Chroma's persisted DB (gitignored)
+├── .env                      # OLLAMA_HOST, model names, thresholds (gitignored)
+├── .env.example
+├── .gitignore
+├── requirements.txt
+└── README.md
+```
+
+## Demo script (for the presentation)
+
+1. Show the corpus PDFs in `data/pdfs/`.
+2. `python -m src.ingest` — briefly comment on chunking (size/overlap) and the
+   embedding model.
+3. `python -m src.cli` and ask:
+   - A syllabus question → grounded answer with `[1] ...` citations.
+   - The exact same out-of-domain question from the eval set → graceful refusal.
+4. `python -m eval.run_eval` — show the grounded-vs-hallucinated metric.
+5. Explain the architecture diagram and the two jury answers above.
