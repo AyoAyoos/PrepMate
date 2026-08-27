@@ -1,0 +1,24 @@
+{
+  "questions": [
+    {
+      "question": "What is Natural Language Processing?",
+      "expected": "answerable"
+    },
+    {
+      "question": "What is tokenization?",
+      "expected": "answerable"
+    },
+    {
+      "question": "What is part-of-speech tagging?",
+      "expected": "answerable"
+    },
+    {
+      "question": "What is the capital of France?",
+      "expected": "unanswerable"
+    },
+    {
+      "question": "Who won the 1998 FIFA World Cup?",
+      "expected": "unanswerable"
+    }
+  ]
+}
