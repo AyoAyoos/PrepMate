@@ -43,6 +43,12 @@ SYSTEM_PROMPT = (
 )
 
 
+CONSIDERED_REFUSAL = (
+    "The model considered the retrieved chunks but none of them answered the "
+    "question, so it refused. Chunks shown below were considered but insufficient."
+)
+
+
 def build_prompt(question: str, context: str) -> str:
     """Assemble the system + context + question prompt."""
     return (
@@ -79,4 +85,13 @@ def generate(retrieved: list, question: str) -> Answer:
     llm = _get_llm()
     raw = llm.invoke(prompt).strip()
 
-    return Answer(text=raw, grounded=True)
+    # Layer (c): output-side refusal detection. Matches the fixed marker
+    # case-insensitively + tolerates trailing punctuation.
+    normalized = " ".join(raw.lower().split())
+    marker = " ".join(REFUSAL_MARKER.lower().split()).rstrip(".")
+    refused = marker in normalized
+
+    if refused:
+        return Answer(text=raw, grounded=False, note=CONSIDERED_REFUSAL)
+
+    return Answer(text=raw, grounded=True, note="Answer grounded in retrieved context.")
