@@ -203,3 +203,14 @@ ask-the-syllabus-bot/
    - The exact same out-of-domain question from the eval set → graceful refusal.
 4. `python -m eval.run_eval` — show the grounded-vs-hallucinated metric.
 5. Explain the architecture diagram and the two jury answers above.
+
+## Known limitations
+
+- **Image-based slides are not retrievable.** 25/181 pages are image-based
+  slides (diagrams, charts, section dividers) with no extractable text; they
+  are not covered by retrieval without OCR. pypdf text-extraction currently
+  ignores them, so questions whose answer lives only in a diagram will be
+  answered as "not found."
+- **Shadow/duplicate text glyphs.** A small number of slides carry
+  unselected/duplicated glyph fragments (e.g. "parsingis" for "parsing is")
+  from the source PDF. Cosmetic only — it does not affect retrieval.
