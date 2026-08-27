@@ -11,13 +11,21 @@ from dataclasses import dataclass
 
 from langchain_ollama import OllamaLLM
 
-from src.config import OLLAMA_HOST, OLLAMA_LLM_MODEL
+from src.config import MAX_DISTANCE, OLLAMA_HOST, OLLAMA_LLM_MODEL
 
 
 @dataclass
 class Answer:
     text: str
     grounded: bool = True
+    note: str = ""
+
+
+UNANSWERABLE = "I could not find the answer to this question in the course documents."
+NO_RETRIEVAL = (
+    "No retrieved content was sufficiently relevant to ground an answer, so I am "
+    "declining to answer rather than risk hallucinating."
+)
 
 
 SYSTEM_PROMPT = (
@@ -45,8 +53,18 @@ def _get_llm() -> OllamaLLM:
 
 
 def generate(retrieved: list, question: str) -> Answer:
-    """Generate an answer from the retrieved (document, score) pairs."""
-    context = "\n\n---\n\n".join(doc.page_content for doc, _ in retrieved)
+    """Generate an answer from the retrieved (document, score) pairs.
+
+    Layer (a): chunks beyond MAX_DISTANCE are discarded BEFORE the LLM runs.
+    """
+    # Layer (a): retrieval distance gate. L2 distance, lower = more similar,
+    # so keep only chunks at or under MAX_DISTANCE.
+    kept = [(doc, score) for doc, score in retrieved if score is not None and score <= MAX_DISTANCE]
+
+    if not kept:
+        return Answer(text=UNANSWERABLE, grounded=False, note=NO_RETRIEVAL)
+
+    context = "\n\n---\n\n".join(doc.page_content for doc, _ in kept)
     prompt = build_prompt(question, context)
 
     llm = _get_llm()
