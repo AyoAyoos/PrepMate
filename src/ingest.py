@@ -14,6 +14,7 @@ CHUNK_SIZE/CHUNK_OVERLAP before paying for a full embed pass.
 """
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -55,15 +56,30 @@ def resolve_pdf_files(source: Path | str) -> list[Path]:
     return files
 
 
+def _file_sha1(path: Path) -> str:
+    """Streaming SHA-1 of a file, used for duplicate detection."""
+    h = hashlib.sha1()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(65536), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def load_pdfs(files: list[Path]) -> list:
-    """Load PDF files into LangChain documents (one per page)."""
+    """Load PDF files into LangChain documents (one per page).
+
+    Tags each page with source filename and a content hash (file_sha1) used
+    for duplicate detection. Citation metadata (source, page) is unchanged.
+    """
     documents = []
     for pdf in files:
         print(f"Loading {pdf.name} ...")
         loader = PyPDFLoader(str(pdf))
         pages = loader.load()
+        digest = _file_sha1(pdf)
         for page in pages:
             page.metadata["source"] = pdf.name
+            page.metadata["file_sha1"] = digest
         documents.extend(pages)
     return documents
 
