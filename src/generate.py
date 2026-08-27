@@ -27,10 +27,19 @@ NO_RETRIEVAL = (
     "declining to answer rather than risk hallucinating."
 )
 
+# Fixed, literal marker the model is asked to emit verbatim when the provided
+# context does not answer the question. Detection below matches it
+# case-insensitively (LLMs vary capitalization/punctuation).
+REFUSAL_MARKER = "This isn't covered in the provided materials."
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions ONLY from the provided "
-    "context. Use no outside knowledge."
+    "context. Follow these rules in order:\n"
+    "1. Answer only using the provided context — use NO outside knowledge.\n"
+    f"2. If the context does not contain the answer, reply with exactly: "
+    f'"{REFUSAL_MARKER}" — do not hedge into a partial guess.\n'
+    "3. When you do answer, stay close to what the context actually says; do not "
+    "generalize into claims broader than the context states."
 )
 
 
