@@ -7,10 +7,11 @@ and refusal logic are added in later steps.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from langchain_ollama import OllamaLLM
 
+from src.citations import format_citations
 from src.config import MAX_DISTANCE, OLLAMA_HOST, OLLAMA_LLM_MODEL
 
 
@@ -18,6 +19,7 @@ from src.config import MAX_DISTANCE, OLLAMA_HOST, OLLAMA_LLM_MODEL
 class Answer:
     text: str
     grounded: bool = True
+    citations: list = field(default_factory=list)
     note: str = ""
 
 
@@ -82,6 +84,8 @@ def generate(retrieved: list, question: str) -> Answer:
     context = "\n\n---\n\n".join(doc.page_content for doc, _ in kept)
     prompt = build_prompt(question, context)
 
+    citations = format_citations(kept)
+
     llm = _get_llm()
     raw = llm.invoke(prompt).strip()
 
@@ -92,6 +96,6 @@ def generate(retrieved: list, question: str) -> Answer:
     refused = marker in normalized
 
     if refused:
-        return Answer(text=raw, grounded=False, note=CONSIDERED_REFUSAL)
+        return Answer(text=raw, grounded=False, citations=citations, note=CONSIDERED_REFUSAL)
 
-    return Answer(text=raw, grounded=True, note="Answer grounded in retrieved context.")
+    return Answer(text=raw, grounded=True, citations=citations, note="Answer grounded in retrieved context.")
