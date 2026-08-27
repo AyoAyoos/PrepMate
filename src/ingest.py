@@ -3,6 +3,10 @@
 Loads PDFs, splits each page into overlapping chunks, embeds them with
 OllamaEmbeddings, and persists them in a local Chroma vector store so that
 retrieval (Step 2) can search them later.
+
+--analyze runs the load + split stages only (no embedding, no store writes) and
+prints a diagnostic report on how the corpus chunks — useful for tuning
+CHUNK_SIZE/CHUNK_OVERLAP before paying for a full embed pass.
 """
 from __future__ import annotations
 
@@ -79,5 +83,50 @@ def ingest(files: list[Path]) -> None:
           f"to store at {VECTORSTORE_DIR}")
 
 
+def analyze(files: list[Path]) -> None:
+    """Split-only diagnostic: report chunking without embedding."""
+    documents = load_pdfs(files)
+    if not documents:
+        return
+
+    chunks, oversized = split_documents(documents)
+    print(f"\nPages: {len(documents)} / {len(files)} file(s)")
+    print(f"Chunks: {len(chunks)}  (oversized slides split: {oversized})")
+    print(f"Ratio: ~{len(chunks) / max(len(documents), 1):.2f} chunks per page\n")
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        length_function=len,
+        separators=["\n\n", "\n", ". ", " "],
+    )
+    for d in documents:
+        if len(d.page_content) > CHUNK_SIZE:
+            sub = splitter.split_text(d.page_content)
+            print(f"  Split slide: {d.metadata.get('source')} page {d.metadata.get('page')} "
+                  f"({len(d.page_content)} chars -> {len(sub)} sub-chunks)")
+
+
+def _cli() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python -m src.ingest",
+        description="Ingest course PDFs into the Chroma vector store.",
+    )
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="Only split + report chunking (no embedding, no store changes).",
+    )
+    args = parser.parse_args()
+
+    files = sorted(PDF_DIR.glob("*.pdf"))
+    if args.analyze:
+        analyze(files)
+    else:
+        ingest(files)
+
+
 if __name__ == "__main__":
-    ingest(sorted(PDF_DIR.glob("*.pdf")))
+    _cli()
