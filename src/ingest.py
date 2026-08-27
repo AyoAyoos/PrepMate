@@ -174,6 +174,8 @@ def clear_store() -> None:
 
 def ingest(source: Path | str, clear: bool = False) -> int:
     """Resolve, filter, and ingest PDFs; return the number of files added."""
+    # Validate the source FIRST so that a bad --source can never trigger the
+    # destructive --clear wipe (resolve_pdf_files raises before clear_store).
     files = resolve_pdf_files(source)
 
     if clear:
