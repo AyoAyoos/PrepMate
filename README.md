@@ -66,7 +66,8 @@ design, not an afterthought bolted into the prompt string.
 4. **Configure** — copy `.env.example` to `.env` and adjust model names,
    `RETRIEVE_K`, and `MAX_DISTANCE` if desired.
 
-5. **Ingest** the PDFs:
+5. **Ingest** the PDFs — see [Ingestion](#ingestion) below for the three modes:
+
    ```bash
    python -m src.ingest
    ```
@@ -75,6 +76,67 @@ design, not an afterthought bolted into the prompt string.
    ```bash
    python -m src.cli
    ```
+
+## Ingestion
+
+```
+python -m src.ingest                                   # append data/pdfs/ (default)
+python -m src.ingest --source path/to/folder           # append all PDFs in a folder
+python -m src.ingest --source path/to/file.pdf         # append a single PDF
+python -m src.ingest --clear [--source <path>]         # wipe the store, then ingest
+python -m src.ingest --list                            # show which sources are stored
+python -m src.ingest --analyze                         # chunk-only report (no embedding)
+```
+
+- **`--source <file-or-folder>`** — where to read PDFs from. Defaults to
+  `data/pdfs/` (or the `.env` `PDF_DIR`). A single `.pdf` ingests just that
+  file; a folder ingests every PDF inside it. The path must exist and contain
+  at least one PDF, otherwise ingestion fails with a clear error.
+- **Default = append.** New PDFs are added to whatever is already in the store,
+  so a corpus can grow across sessions. Unit 1 and Unit 2 ingested today and
+  Unit 3 tomorrow all remain searchable together:
+  ```bash
+  python -m src.ingest --source data/unit1   # day 1
+  python -m src.ingest --source data/unit2   # day 2: unit1 + unit2 stored
+  python -m src.ingest --source data/unit3   # day 3: unit1 + unit2 + unit3 stored
+  ```
+- **`--clear`** — wipes the existing collection completely *before* ingesting
+  the given source. Use this to switch subjects/corpora entirely rather than
+  add to the current one.
+- **`--list`** — prints the source filenames currently represented in the
+  store, so you can decide whether to append or clear.
+- **Duplicate guard.** On append, each PDF is matched against the store by
+  filename **and** a streaming content hash (`file_sha1`, stored in every
+  chunk's metadata). A file already present is skipped with an explicit
+  `Skipped: <name> (already in store, name + content-hash match)` line, so
+  accidentally re-running ingestion on an already-added unit adds no duplicate
+  chunks and can't skew retrieval.
+
+The chunking, embedding, and citation-metadata logic is unchanged by these
+modes — only *where* the chunks come from and *whether* the store is appended
+or rebuilt differs.
+
+## Evaluation (grounded vs hallucinated)
+
+A fixed eval set lives in `eval/test_questions.json` — a mix of questions that
+*should* be answerable from a syllabus and questions that are deliberately
+out-of-domain (and therefore must be refused). Run:
+
+```bash
+python -m eval.run_eval
+```
+
+It reports per-question verdicts plus an overall accuracy metric:
+
+```
+Grounded answers:  5/5
+Correct refusals:  3/3
+Overall accuracy:  8/8 (100%)
+```
+
+Higher accuracy == fewer hallucinations. The eval only counts an answer as
+*grounded* when it is backed by retrieved chunks with citations, and only
+counts a refusal as *correct* when the model declined to guess.
 
 ## How retrieval reduces hallucination (jury Q1)
 
@@ -130,45 +192,6 @@ In the eval, such questions are expected to be `unanswerable`, and `run_eval.py`
 trusts `Answer.grounded` (from the three layers) — so both the distance-gate
 refusal and the marker-detected refusal score as a *correct refusal*. Refusing
 is the right outcome, not a failure.
-
-## Ingestion
-
-```
-python -m src.ingest                                   # append data/pdfs/ (default)
-python -m src.ingest --source path/to/folder           # append all PDFs in a folder
-python -m src.ingest --source path/to/file.pdf         # append a single PDF
-python -m src.ingest --clear [--source <path>]         # wipe the store, then ingest
-python -m src.ingest --list                            # show which sources are stored
-python -m src.ingest --analyze                         # chunk-only report (no embedding)
-```
-
-- **`--source <file-or-folder>`** — where to read PDFs from. Defaults to
-  `data/pdfs/` (or the `.env` `PDF_DIR`). A single `.pdf` ingests just that
-  file; a folder ingests every PDF inside it. The path must exist and contain
-  at least one PDF, otherwise ingestion fails with a clear error.
-- **Default = append.** New PDFs are added to whatever is already in the store,
-  so a corpus can grow across sessions. Unit 1 and Unit 2 ingested today and
-  Unit 3 tomorrow all remain searchable together:
-  ```bash
-  python -m src.ingest --source data/unit1   # day 1
-  python -m src.ingest --source data/unit2   # day 2: unit1 + unit2 stored
-  python -m src.ingest --source data/unit3   # day 3: unit1 + unit2 + unit3 stored
-  ```
-- **`--clear`** — wipes the existing collection completely *before* ingesting
-  the given source. Use this to switch subjects/corpora entirely rather than
-  add to the current one.
-- **`--list`** — prints the source filenames currently represented in the
-  store, so you can decide whether to append or clear.
-- **Duplicate guard.** On append, each PDF is matched against the store by
-  filename **and** a streaming content hash (`file_sha1`, stored in every
-  chunk's metadata). A file already present is skipped with an explicit
-  `Skipped: <name> (already in store, name + content-hash match)` line, so
-  accidentally re-running ingestion on an already-added unit adds no duplicate
-  chunks and can't skew retrieval.
-
-The chunking, embedding, and citation-metadata logic is unchanged by these
-modes — only *where* the chunks come from and *whether* the store is appended
-or rebuilt differs.
 
 ## Project layout
 
