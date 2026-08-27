@@ -1,16 +1,30 @@
 """Step 1 of the RAG pipeline: ingest PDFs.
 
-Loads PDFs, splits each page into overlapping chunks, embeds them with
-OllamaEmbeddings, and persists them in a local Chroma vector store so that
-retrieval (Step 2) can search them later.
+Loads PDFs (a single file or a whole folder), splits them into overlapping
+text chunks, embeds the chunks with OllamaEmbeddings, and persists them in a
+local Chroma vector store.
 
---source selects where the PDFs are read from (a single PDF file or a whole
-folder; default data/pdfs/). Paths that don't exist or contain no PDFs fail
-with a clear error before anything is embedded.
+Features:
+  * --source <file-or-folder>  ingest one PDF or all PDFs in a folder.
+                               Defaults to data/pdfs/ (SOURCE_DEFAULT).
+  * default: APPEND            new PDFs are added to whatever is already in
+                               the store, so a corpus can grow across
+                               sessions (Unit 1 + 2 today, Unit 3 tomorrow).
+  * --clear                    wipe the existing collection before ingesting
+                               the new source (for switching corpora).
+  * --list                     print which source files are currently in the
+                               store, without ingesting anything.
 
---analyze runs the load + split stages only (no embedding, no store writes) and
-prints a diagnostic report on how the corpus chunks — useful for tuning
-CHUNK_SIZE/CHUNK_OVERLAP before paying for a full embed pass.
+Duplicate guard: a PDF already in the store (matched by name + content hash)
+is skipped with a warning on append, so re-runs don't duplicate chunks.
+
+Usage:
+    python -m src.ingest                        # append data/pdfs
+    python -m src.ingest --source data/unit3     # append a folder
+    python -m src.ingest --source data/unit3.pdf # append a single file
+    python -m src.ingest --clear --source new_subject
+    python -m src.ingest --list
+    python -m src.ingest --analyze
 """
 from __future__ import annotations
 
@@ -77,6 +91,19 @@ def _existing_keys() -> set[tuple[str, str]]:
     }
 
 
+def list_sources() -> list[str]:
+    """Return the distinct source filenames currently in the store."""
+    client = _get_client()
+    try:
+        col = client.get_or_create_collection(COLLECTION_NAME)
+        data = col.get(include=["metadatas"])
+    except Exception:
+        return []
+    metas = data.get("metadatas") or []
+    sources = sorted({m.get("source") for m in metas if m and m.get("source")})
+    return sources
+
+
 def _file_sha1(path: Path) -> str:
     """Streaming SHA-1 of a file, used for duplicate detection."""
     h = hashlib.sha1()
@@ -135,17 +162,32 @@ def _embed_chunks(chunks: list) -> None:
         vectorstore.add_documents(chunks)
 
 
-def ingest(source: Path | str) -> int:
-    """Resolve, filter, and ingest PDFs (append by default); return files added."""
+def clear_store() -> None:
+    """Wipe the existing Chroma collection entirely."""
+    client = _get_client()
+    try:
+        client.delete_collection(COLLECTION_NAME)
+        print(f"Cleared existing collection '{COLLECTION_NAME}'.")
+    except Exception:
+        print(f"No existing collection '{COLLECTION_NAME}' to clear.")
+
+
+def ingest(source: Path | str, clear: bool = False) -> int:
+    """Resolve, filter, and ingest PDFs; return the number of files added."""
     files = resolve_pdf_files(source)
 
-    existing = _existing_keys()
-    pending, dupes = [], []
-    for f in files:
-        if (f.name, _file_sha1(f)) in existing:
-            dupes.append(f)
-        else:
-            pending.append(f)
+    if clear:
+        clear_store()
+        pending = files
+        dupes = []
+    else:
+        existing = _existing_keys()
+        pending, dupes = [], []
+        for f in files:
+            if (f.name, _file_sha1(f)) in existing:
+                dupes.append(f)
+            else:
+                pending.append(f)
 
     if not pending:
         for f in dupes:
@@ -207,6 +249,16 @@ def _cli() -> None:
         help=f"PDF file or folder to ingest. Default: {SOURCE_DEFAULT}",
     )
     parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Wipe the existing collection before ingesting (full reset).",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List source files currently in the store, then exit.",
+    )
+    parser.add_argument(
         "--analyze",
         action="store_true",
         help="Only split + report chunking (no embedding, no store changes).",
@@ -214,10 +266,19 @@ def _cli() -> None:
     args = parser.parse_args()
 
     try:
+        if args.list:
+            sources = list_sources()
+            if sources:
+                print("Source files currently in the vector store:")
+                for s in sources:
+                    print(f"  - {s}")
+            else:
+                print("The vector store is empty.")
+            return
         if args.analyze:
             analyze(args.source)
         else:
-            ingest(args.source)
+            ingest(args.source, clear=args.clear)
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
