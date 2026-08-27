@@ -18,6 +18,7 @@ import hashlib
 import sys
 from pathlib import Path
 
+import chromadb
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import Chroma
 from langchain_ollama import OllamaEmbeddings
@@ -26,6 +27,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from src.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
+    COLLECTION_NAME,
     OLLAMA_EMBED_MODEL,
     OLLAMA_HOST,
     SOURCE_DEFAULT,
@@ -54,6 +56,25 @@ def resolve_pdf_files(source: Path | str) -> list[Path]:
     if not files:
         raise FileNotFoundError(f"No PDF files found at: {p}")
     return files
+
+
+def _get_client() -> chromadb.ClientAPI:
+    return chromadb.PersistentClient(path=str(VECTORSTORE_DIR))
+
+
+def _existing_keys() -> set[tuple[str, str]]:
+    """Return {(source_name, file_sha1)} already present in the store."""
+    client = _get_client()
+    try:
+        col = client.get_collection(COLLECTION_NAME)
+        data = col.get(include=["metadatas"])
+    except Exception:
+        return set()
+    metas = data.get("metadatas") or []
+    return {
+        (m["source"], m["file_sha1"]) for m in metas
+        if m and m.get("source") and m.get("file_sha1")
+    }
 
 
 def _file_sha1(path: Path) -> str:
@@ -100,12 +121,13 @@ def split_documents(documents: list) -> tuple:
 
 
 def _embed_chunks(chunks: list) -> None:
-    """Embed and persist chunks into the Chroma store."""
+    """Embed and append chunks into the persistent Chroma store (default: append)."""
     embeddings = OllamaEmbeddings(
         base_url=OLLAMA_HOST,
         model=OLLAMA_EMBED_MODEL,
     )
     vectorstore = Chroma(
+        collection_name=COLLECTION_NAME,
         persist_directory=str(VECTORSTORE_DIR),
         embedding_function=embeddings,
     )
@@ -113,10 +135,25 @@ def _embed_chunks(chunks: list) -> None:
         vectorstore.add_documents(chunks)
 
 
-def ingest(source: Path | str) -> None:
-    """Load, split, embed, and persist PDFs from the given source."""
+def ingest(source: Path | str) -> int:
+    """Resolve, filter, and ingest PDFs (append by default); return files added."""
     files = resolve_pdf_files(source)
-    documents = load_pdfs(files)
+
+    existing = _existing_keys()
+    pending, dupes = [], []
+    for f in files:
+        if (f.name, _file_sha1(f)) in existing:
+            dupes.append(f)
+        else:
+            pending.append(f)
+
+    if not pending:
+        for f in dupes:
+            print(f"  Skipped: {f.name} (already in store, name + content-hash match)")
+        print(f"Nothing new to ingest from {source}.")
+        return 0
+
+    documents = load_pdfs(pending)
     chunks, oversized = split_documents(documents)
     pages = len(documents)
     print(f"Pages: {pages} | Chunks: {len(chunks)} | "
@@ -124,8 +161,12 @@ def ingest(source: Path | str) -> None:
     print(f"Ratio: ~{len(chunks) / max(pages, 1):.2f} chunks per page")
 
     _embed_chunks(chunks)
-    print(f"Added {pages} pages / {len(chunks)} chunks "
-          f"from {len(files)} file(s) to store at {VECTORSTORE_DIR}")
+    print(f"Added {pages} pages / {len(chunks)} chunks from {len(pending)} file(s) "
+          f"to '{COLLECTION_NAME}' in {VECTORSTORE_DIR}")
+
+    for f in dupes:
+        print(f"  Skipped: {f.name} (already in store, name + content-hash match)")
+    return len(pending)
 
 
 def analyze(source: Path | str) -> None:
