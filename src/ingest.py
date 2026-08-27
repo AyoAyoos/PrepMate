@@ -147,7 +147,7 @@ def _cli() -> None:
     parser.add_argument(
         "--source",
         default=str(SOURCE_DEFAULT),
-        help=f"PDF folder to ingest. Default: {SOURCE_DEFAULT}",
+        help=f"PDF file or folder to ingest. Default: {SOURCE_DEFAULT}",
     )
     parser.add_argument(
         "--analyze",
