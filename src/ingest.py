@@ -4,7 +4,9 @@ Loads PDFs, splits each page into overlapping chunks, embeds them with
 OllamaEmbeddings, and persists them in a local Chroma vector store so that
 retrieval (Step 2) can search them later.
 
---source selects where the PDFs are read from (default data/pdfs/).
+--source selects where the PDFs are read from (a single PDF file or a whole
+folder; default data/pdfs/). Paths that don't exist or contain no PDFs fail
+with a clear error before anything is embedded.
 
 --analyze runs the load + split stages only (no embedding, no store writes) and
 prints a diagnostic report on how the corpus chunks — useful for tuning
@@ -12,6 +14,7 @@ CHUNK_SIZE/CHUNK_OVERLAP before paying for a full embed pass.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from langchain_community.document_loaders import PyPDFLoader
@@ -29,9 +32,27 @@ from src.config import (
 )
 
 
-def _source_files(source: Path) -> list[Path]:
-    """Glob PDFs in the source directory (folder ingest)."""
-    return sorted(source.glob("*.pdf"))
+def resolve_pdf_files(source: Path | str) -> list[Path]:
+    """Resolve --source into a list of PDF files, validating existence.
+
+    Raises FileNotFoundError with a clear message if the path is missing or
+    contains no PDFs.
+    """
+    p = Path(source)
+
+    if not p.exists():
+        raise FileNotFoundError(f"Source path does not exist: {p}")
+
+    if p.is_file():
+        if p.suffix.lower() != ".pdf":
+            raise FileNotFoundError(f"Source is not a PDF file: {p}")
+        files = [p]
+    else:
+        files = sorted(p.glob("*.pdf"))
+
+    if not files:
+        raise FileNotFoundError(f"No PDF files found at: {p}")
+    return files
 
 
 def load_pdfs(files: list[Path]) -> list:
@@ -76,9 +97,9 @@ def _embed_chunks(chunks: list) -> None:
         vectorstore.add_documents(chunks)
 
 
-def ingest(source: Path) -> None:
-    """Load, split, embed, and persist PDFs from the given source folder."""
-    files = _source_files(source)
+def ingest(source: Path | str) -> None:
+    """Load, split, embed, and persist PDFs from the given source."""
+    files = resolve_pdf_files(source)
     documents = load_pdfs(files)
     chunks, oversized = split_documents(documents)
     pages = len(documents)
@@ -91,9 +112,9 @@ def ingest(source: Path) -> None:
           f"from {len(files)} file(s) to store at {VECTORSTORE_DIR}")
 
 
-def analyze(source: Path) -> None:
+def analyze(source: Path | str) -> None:
     """Split-only diagnostic: report chunking without embedding."""
-    files = _source_files(source)
+    files = resolve_pdf_files(source)
     documents = load_pdfs(files)
     if not documents:
         return
@@ -135,11 +156,14 @@ def _cli() -> None:
     )
     args = parser.parse_args()
 
-    source = Path(args.source)
-    if args.analyze:
-        analyze(source)
-    else:
-        ingest(source)
+    try:
+        if args.analyze:
+            analyze(args.source)
+        else:
+            ingest(args.source)
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
