@@ -42,12 +42,17 @@ def format_citations(docs: list[Any]) -> list[dict[str, Any]]:
     return citations
 
 
-def render_citations(citations: list[dict[str, Any]]) -> str:
-    """Render citation dicts as a compact readable string."""
+def render_citations(citations: list[dict[str, Any]], label: str = "SOURCES") -> str:
+    """Render citation dicts as a compact readable string.
+
+    `label` prefixes the list (default "SOURCES"). Callers may pass something
+    like "SOURCES (considered but insufficient)" when the chunks were
+    retrieved but the model refused to answer from them.
+    """
     if not citations:
         return "No sources retrieved."
 
-    lines = ["--- SOURCES ---"]
+    lines = [f"--- {label} ---"]
     for c in citations:
         loc = f"p.{c['page']}" if c["page"] is not None else "n/a"
         score = f" (d={c['score']:.2f})" if c["score"] is not None else ""
