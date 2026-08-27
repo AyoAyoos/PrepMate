@@ -47,3 +47,6 @@ MAX_DISTANCE = _get_float("MAX_DISTANCE", 0.70)
 
 VECTORSTORE_DIR = PROJECT_ROOT / _get("VECTORSTORE_DIR", "vectorstore/chroma")
 PDF_DIR = PROJECT_ROOT / _get("PDF_DIR", "data/pdfs")
+
+CHUNK_SIZE = 900
+CHUNK_OVERLAP = 50
