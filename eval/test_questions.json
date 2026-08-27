@@ -1,24 +1,69 @@
 {
   "questions": [
     {
-      "question": "What is Natural Language Processing?",
-      "expected": "answerable"
+      "question": "What is syntactic analysis?",
+      "expected": "answerable",
+      "reason": "Covered in Unit II slide (p.3); measured distance 0.21."
     },
     {
-      "question": "What is tokenization?",
-      "expected": "answerable"
+      "question": "What is stopword removal?",
+      "expected": "answerable",
+      "reason": "Covered in Unit I slide '5) Remove Stopwords' (p.41); measured distance 0.44."
     },
     {
-      "question": "What is part-of-speech tagging?",
-      "expected": "answerable"
+      "question": "What is top-down parsing?",
+      "expected": "answerable",
+      "reason": "Covered in Unit II 'Top-down parsing' slides (p.51); measured distance 0.42."
+    },
+    {
+      "question": "What is bottom-up parsing?",
+      "expected": "answerable",
+      "reason": "Covered in Unit II 'Bottom-up parsing' slide (p.54); measured distance 0.38."
+    },
+    {
+      "question": "What is a shift reduce parser?",
+      "expected": "answerable",
+      "reason": "Covered in Unit II 'Shift Reduce Parser' slide (p.56); measured distance 0.40."
+    },
+    {
+      "question": "What is lemmatization?",
+      "expected": "answerable",
+      "reason": "Covered in Unit I morphology/lemmatization content; measured distance 0.28."
     },
     {
       "question": "What is the capital of France?",
-      "expected": "unanswerable"
+      "expected": "unanswerable",
+      "reason": "Out-of-scope; top distance 1.08 (> 0.70), must refuse."
     },
     {
-      "question": "Who won the 1998 FIFA World Cup?",
-      "expected": "unanswerable"
+      "question": "Who won the FIFA World Cup in 1998?",
+      "expected": "unanswerable",
+      "reason": "Out-of-scope; top distance 1.19, must refuse."
+    },
+    {
+      "question": "What is the square root of 144?",
+      "expected": "unanswerable",
+      "reason": "Out-of-scope; top distance 0.96, must refuse."
+    },
+    {
+      "question": "Who is the current prime minister of the UK?",
+      "expected": "unanswerable",
+      "reason": "Out-of-scope; top distance 1.07, must refuse."
+    },
+    {
+      "question": "Explain HMM tagging with an example",
+      "expected": "embellishable",
+      "reason": "HMM is in Unit II (distance 0.52) but a worked example/probabilities are NOT in the slides - the known fabrication case (see faithfulness_repro.md)."
+    },
+    {
+      "question": "Describe how HMM sequence tagging works",
+      "expected": "embellishable",
+      "reason": "HMM content present (distance 0.50) but presentation may over-elaborate with invented numbers/equations."
+    },
+    {
+      "question": "What is the difference between stemming and lemmatization?",
+      "expected": "embellishable",
+      "reason": "Both terms in Unit I (distance 0.28); model may add extra contrast not explicitly stated."
     }
   ]
 }
