@@ -4,6 +4,8 @@ Loads PDFs, splits each page into overlapping chunks, embeds them with
 OllamaEmbeddings, and persists them in a local Chroma vector store so that
 retrieval (Step 2) can search them later.
 
+--source selects where the PDFs are read from (default data/pdfs/).
+
 --analyze runs the load + split stages only (no embedding, no store writes) and
 prints a diagnostic report on how the corpus chunks — useful for tuning
 CHUNK_SIZE/CHUNK_OVERLAP before paying for a full embed pass.
@@ -22,9 +24,14 @@ from src.config import (
     CHUNK_SIZE,
     OLLAMA_EMBED_MODEL,
     OLLAMA_HOST,
-    PDF_DIR,
+    SOURCE_DEFAULT,
     VECTORSTORE_DIR,
 )
+
+
+def _source_files(source: Path) -> list[Path]:
+    """Glob PDFs in the source directory (folder ingest)."""
+    return sorted(source.glob("*.pdf"))
 
 
 def load_pdfs(files: list[Path]) -> list:
@@ -69,8 +76,9 @@ def _embed_chunks(chunks: list) -> None:
         vectorstore.add_documents(chunks)
 
 
-def ingest(files: list[Path]) -> None:
-    """Load, split, embed, and persist the given PDF files."""
+def ingest(source: Path) -> None:
+    """Load, split, embed, and persist PDFs from the given source folder."""
+    files = _source_files(source)
     documents = load_pdfs(files)
     chunks, oversized = split_documents(documents)
     pages = len(documents)
@@ -80,11 +88,12 @@ def ingest(files: list[Path]) -> None:
 
     _embed_chunks(chunks)
     print(f"Added {pages} pages / {len(chunks)} chunks "
-          f"to store at {VECTORSTORE_DIR}")
+          f"from {len(files)} file(s) to store at {VECTORSTORE_DIR}")
 
 
-def analyze(files: list[Path]) -> None:
+def analyze(source: Path) -> None:
     """Split-only diagnostic: report chunking without embedding."""
+    files = _source_files(source)
     documents = load_pdfs(files)
     if not documents:
         return
@@ -115,17 +124,22 @@ def _cli() -> None:
         description="Ingest course PDFs into the Chroma vector store.",
     )
     parser.add_argument(
+        "--source",
+        default=str(SOURCE_DEFAULT),
+        help=f"PDF folder to ingest. Default: {SOURCE_DEFAULT}",
+    )
+    parser.add_argument(
         "--analyze",
         action="store_true",
         help="Only split + report chunking (no embedding, no store changes).",
     )
     args = parser.parse_args()
 
-    files = sorted(PDF_DIR.glob("*.pdf"))
+    source = Path(args.source)
     if args.analyze:
-        analyze(files)
+        analyze(source)
     else:
-        ingest(files)
+        ingest(source)
 
 
 if __name__ == "__main__":

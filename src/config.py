@@ -48,6 +48,9 @@ MAX_DISTANCE = _get_float("MAX_DISTANCE", 0.70)
 VECTORSTORE_DIR = PROJECT_ROOT / _get("VECTORSTORE_DIR", "vectorstore/chroma")
 PDF_DIR = PROJECT_ROOT / _get("PDF_DIR", "data/pdfs")
 
+# Default source for ingestion when --source is not given (a folder or file).
+SOURCE_DEFAULT = PDF_DIR
+
 # Tuned for slide-based PDFs where each page is 277-400 chars and
 # semantically atomic. chunk_size=1000 keeps one-slide-per-chunk even for the
 # handful of dense slides that run up to ~940 chars; overlap is only a safety
