@@ -36,8 +36,10 @@ def run() -> None:
             })
             continue
 
-        # Scoring: an answer is "grounded" if it produced at least one citation.
-        grounded = bool(answer.citations)
+        # Scoring: use Answer.grounded (set by the three-layer refusal logic),
+        # NOT bool(citations) — a "considered but insufficient" refusal still
+        # carries citations yet must count as a correct refusal, not grounded.
+        grounded = answer.grounded
         ok = (grounded and expected == "answerable") or (
             not grounded and expected == "unanswerable"
         )
