@@ -1,17 +1,26 @@
 """Step 1 of the RAG pipeline: ingest PDFs.
 
-Loads PDFs and splits each page into chunks with RecursiveCharacterTextSplitter
-so later steps can embed and store them. Chunking keeps each slide semantically
-atomic while still splitting any dense slide that exceeds the chunk size.
+Loads PDFs, splits each page into overlapping chunks, embeds them with
+OllamaEmbeddings, and persists them in a local Chroma vector store so that
+retrieval (Step 2) can search them later.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.vectorstores import Chroma
+from langchain_ollama import OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from src.config import CHUNK_OVERLAP, CHUNK_SIZE
+from src.config import (
+    CHUNK_OVERLAP,
+    CHUNK_SIZE,
+    OLLAMA_EMBED_MODEL,
+    OLLAMA_HOST,
+    PDF_DIR,
+    VECTORSTORE_DIR,
+)
 
 
 def load_pdfs(files: list[Path]) -> list:
@@ -42,10 +51,33 @@ def split_documents(documents: list) -> tuple:
     return chunks, oversized
 
 
+def _embed_chunks(chunks: list) -> None:
+    """Embed and persist chunks into the Chroma store."""
+    embeddings = OllamaEmbeddings(
+        base_url=OLLAMA_HOST,
+        model=OLLAMA_EMBED_MODEL,
+    )
+    vectorstore = Chroma(
+        persist_directory=str(VECTORSTORE_DIR),
+        embedding_function=embeddings,
+    )
+    if chunks:
+        vectorstore.add_documents(chunks)
+
+
 def ingest(files: list[Path]) -> None:
-    """Split the files and report chunking stats (no embedding yet)."""
+    """Load, split, embed, and persist the given PDF files."""
     documents = load_pdfs(files)
     chunks, oversized = split_documents(documents)
-    print(f"Pages: {len(documents)} | Chunks: {len(chunks)} | "
+    pages = len(documents)
+    print(f"Pages: {pages} | Chunks: {len(chunks)} | "
           f"Slides over {CHUNK_SIZE} chars split: {oversized}")
-    print(f"Ratio: ~{len(chunks) / max(len(documents), 1):.2f} chunks per page")
+    print(f"Ratio: ~{len(chunks) / max(pages, 1):.2f} chunks per page")
+
+    _embed_chunks(chunks)
+    print(f"Added {pages} pages / {len(chunks)} chunks "
+          f"to store at {VECTORSTORE_DIR}")
+
+
+if __name__ == "__main__":
+    ingest(sorted(PDF_DIR.glob("*.pdf")))
