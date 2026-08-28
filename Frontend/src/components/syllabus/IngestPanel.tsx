@@ -228,6 +228,9 @@ export function IngestPanel({
                   Upload {pending.length} file{pending.length > 1 ? "s" : ""}
                 </Button>
               </div>
+              <p className="text-right text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+                {formatBytes(pending.reduce((sum, f) => sum + f.size, 0))} total
+              </p>
             </div>
           )}
         </div>
