@@ -49,36 +49,40 @@ export function IngestPanel({
     skipped: string[];
   } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
 
   function pick() {
     fileRef.current?.click();
   }
 
-  function onFilesChanged(e: React.ChangeEvent<HTMLInputElement>) {
-    const picked = Array.from(e.target.files ?? []);
-    if (picked.length) {
-      const valid: File[] = [];
-      const rejected: string[] = [];
-      for (const f of picked) {
-        const ext = extensionOf(f.name);
-        if (!ACCEPT_EXTENSIONS.includes(ext)) {
-          rejected.push(`${f.name} (unsupported type)`);
-        } else if (f.size > MAX_FILE_MB * 1024 * 1024) {
-          rejected.push(`${f.name} (exceeds ${MAX_FILE_MB} MB)`);
-        } else if (f.size === 0) {
-          rejected.push(`${f.name} (empty file)`);
-        } else {
-          valid.push(f);
-        }
+  function acceptFiles(list: ArrayLike<File>) {
+    const picked = Array.from(list);
+    if (!picked.length) return;
+    const valid: File[] = [];
+    const rejected: string[] = [];
+    for (const f of picked) {
+      const ext = extensionOf(f.name);
+      if (!ACCEPT_EXTENSIONS.includes(ext)) {
+        rejected.push(`${f.name} (unsupported type)`);
+      } else if (f.size > MAX_FILE_MB * 1024 * 1024) {
+        rejected.push(`${f.name} (exceeds ${MAX_FILE_MB} MB)`);
+      } else if (f.size === 0) {
+        rejected.push(`${f.name} (empty file)`);
+      } else {
+        valid.push(f);
       }
-      if (valid.length) {
-        setPending((prev) => [...prev, ...valid]);
-      }
-      if (rejected.length) {
-        setNote(`Couldn't add: ${rejected.join(", ")}`);
-      }
-      setSummary(null);
     }
+    if (valid.length) {
+      setPending((prev) => [...prev, ...valid]);
+    }
+    if (rejected.length) {
+      setNote(`Couldn't add: ${rejected.join(", ")}`);
+    }
+    setSummary(null);
+  }
+
+  function onFilesChanged(e: React.ChangeEvent<HTMLInputElement>) {
+    acceptFiles(e.target.files ?? []);
     e.target.value = "";
   }
 
@@ -154,61 +158,79 @@ export function IngestPanel({
           ))}
         </div>
 
-        <input
-          ref={fileRef}
-          type="file"
-          accept={ACCEPT}
-          multiple
-          className="hidden"
-          onChange={onFilesChanged}
-        />
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            acceptFiles(e.dataTransfer.files);
+          }}
+          className={cn(
+            "border-2 border-dashed transition-colors",
+            dragging ? "border-primary bg-primary/5 shadow-brutal-sm" : "border-muted-foreground/60",
+          )}
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            accept={ACCEPT}
+            multiple
+            className="hidden"
+            onChange={onFilesChanged}
+          />
 
-        {pending.length === 0 ? (
-          <Button
-            variant="brutal"
-            className="w-full"
-            onClick={pick}
-            disabled={busy}
-          >
-            <Paperclip className="size-4" />
-            Add files…
-          </Button>
-        ) : (
-          <div className="space-y-3">
-            <div className="max-h-36 space-y-1.5 overflow-y-auto">
-              {pending.map((f) => (
-                <div
-                  key={f.name}
-                  className="flex items-center justify-between gap-3 border-2 border-foreground bg-card px-3 py-1.5"
-                >
-                  <span className="truncate font-mono text-xs font-bold">{f.name}</span>
-                  <span className="shrink-0 text-[11px] font-semibold uppercase text-muted-foreground">
-                    {formatBytes(f.size)}
-                  </span>
-                  {!busy && (
-                    <button
-                      onClick={() => removeFile(f.name)}
-                      className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
-                      aria-label={`Remove ${f.name}`}
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
+          {pending.length === 0 ? (
+            <Button
+              variant="brutal"
+              className="w-full"
+              onClick={pick}
+              disabled={busy}
+            >
+              <Paperclip className="size-4" />
+              {dragging ? "Drop files here" : "Add files…"}
+            </Button>
+          ) : (
+            <div className="space-y-3 p-3">
+              <div className="max-h-36 space-y-1.5 overflow-y-auto">
+                {pending.map((f) => (
+                  <div
+                    key={f.name}
+                    className="flex items-center justify-between gap-3 border-2 border-foreground bg-card px-3 py-1.5"
+                  >
+                    <span className="truncate font-mono text-xs font-bold">{f.name}</span>
+                    <span className="shrink-0 text-[11px] font-semibold uppercase text-muted-foreground">
+                      {formatBytes(f.size)}
+                    </span>
+                    {!busy && (
+                      <button
+                        onClick={() => removeFile(f.name)}
+                        className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+                        aria-label={`Remove ${f.name}`}
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Button variant="brutalOutline" className="flex-1" onClick={pick} disabled={busy}>
+                  <Paperclip className="size-4" />
+                  Add more
+                </Button>
+                <Button variant="brutal" className="flex-1" onClick={add} disabled={busy}>
+                  {busy ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />}
+                  Upload {pending.length} file{pending.length > 1 ? "s" : ""}
+                </Button>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <Button variant="brutalOutline" className="flex-1" onClick={pick} disabled={busy}>
-                <Paperclip className="size-4" />
-                Add more
-              </Button>
-              <Button variant="brutal" className="flex-1" onClick={add} disabled={busy}>
-                {busy ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />}
-                Upload {pending.length} file{pending.length > 1 ? "s" : ""}
-              </Button>
-            </div>
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="max-h-52 space-y-2 overflow-y-auto">
           {documents.map((d) => (
