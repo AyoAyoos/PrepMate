@@ -6,6 +6,9 @@ pypdf
 python-dotenv
 fastapi
 uvicorn
+python-multipart
+python-docx
+openpyxl
 
 
 
