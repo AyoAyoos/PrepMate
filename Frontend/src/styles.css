@@ -1,0 +1,183 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system definition.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values using oklch.
+ * All colors MUST use oklch format.
+ *
+ * To add a new semantic color:
+ * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ */
+
+@theme inline {
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --shadow-brutal: 6px 6px 0 0 var(--brutal-shadow);
+  --shadow-brutal-sm: 3px 3px 0 0 var(--brutal-shadow);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0rem;
+  --brutal-shadow: oklch(0.14 0.02 90);
+  --background: oklch(0.97 0.02 95);
+  --foreground: oklch(0.16 0.02 90);
+  --card: oklch(0.995 0.008 95);
+  --card-foreground: oklch(0.16 0.02 90);
+  --popover: oklch(0.995 0.008 95);
+  --popover-foreground: oklch(0.16 0.02 90);
+  --primary: oklch(0.55 0.21 28);
+  --primary-foreground: oklch(0.99 0.01 95);
+  --secondary: oklch(0.92 0.05 95);
+  --secondary-foreground: oklch(0.16 0.02 90);
+  --muted: oklch(0.93 0.02 95);
+  --muted-foreground: oklch(0.45 0.02 90);
+  --accent: oklch(0.88 0.17 95);
+  --accent-foreground: oklch(0.16 0.02 90);
+  --success: oklch(0.68 0.17 150);
+  --success-foreground: oklch(0.14 0.02 150);
+  --destructive: oklch(0.55 0.21 28);
+  --destructive-foreground: oklch(0.99 0.01 95);
+  --border: oklch(0.16 0.02 90);
+  --input: oklch(0.16 0.02 90);
+  --ring: oklch(0.55 0.21 28);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.95 0.03 95);
+  --sidebar-foreground: oklch(0.16 0.02 90);
+  --sidebar-primary: oklch(0.55 0.21 28);
+  --sidebar-primary-foreground: oklch(0.99 0.01 95);
+  --sidebar-accent: oklch(0.88 0.17 95);
+  --sidebar-accent-foreground: oklch(0.16 0.02 90);
+  --sidebar-border: oklch(0.16 0.02 90);
+  --sidebar-ring: oklch(0.55 0.21 28);
+}
+
+.dark {
+  --brutal-shadow: oklch(0.72 0.18 95);
+  --background: oklch(0.17 0.02 265);
+  --foreground: oklch(0.97 0.01 95);
+  --card: oklch(0.22 0.025 265);
+  --card-foreground: oklch(0.97 0.01 95);
+  --popover: oklch(0.22 0.025 265);
+  --popover-foreground: oklch(0.97 0.01 95);
+  --primary: oklch(0.72 0.18 95);
+  --primary-foreground: oklch(0.16 0.02 90);
+  --secondary: oklch(0.28 0.03 265);
+  --secondary-foreground: oklch(0.97 0.01 95);
+  --muted: oklch(0.27 0.02 265);
+  --muted-foreground: oklch(0.72 0.02 265);
+  --accent: oklch(0.72 0.18 95);
+  --accent-foreground: oklch(0.16 0.02 90);
+  --success: oklch(0.75 0.18 150);
+  --success-foreground: oklch(0.14 0.02 150);
+  --destructive: oklch(0.62 0.22 28);
+  --destructive-foreground: oklch(0.98 0.01 95);
+  --border: oklch(0.97 0.01 95);
+  --input: oklch(0.97 0.01 95);
+  --ring: oklch(0.72 0.18 95);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.2 0.025 265);
+  --sidebar-foreground: oklch(0.97 0.01 95);
+  --sidebar-primary: oklch(0.72 0.18 95);
+  --sidebar-primary-foreground: oklch(0.16 0.02 90);
+  --sidebar-accent: oklch(0.28 0.03 265);
+  --sidebar-accent-foreground: oklch(0.97 0.01 95);
+  --sidebar-border: oklch(0.97 0.01 95);
+  --sidebar-ring: oklch(0.72 0.18 95);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+}
+
+@utility grid-paper {
+  background-image:
+    linear-gradient(to right, color-mix(in oklch, var(--foreground) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklch, var(--foreground) 7%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+@utility shiny-text {
+  background: linear-gradient(
+    100deg,
+    var(--foreground) 30%,
+    var(--primary) 50%,
+    var(--foreground) 70%
+  );
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shine 3.5s linear infinite;
+}
+
+@keyframes shine {
+  to {
+    background-position: -220% center;
+  }
+}
