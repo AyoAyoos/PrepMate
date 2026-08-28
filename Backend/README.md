@@ -77,10 +77,40 @@ design, not an afterthought bolted into the prompt string.
    python -m src.ingest
    ```
 
-6. **Run the bot**:
+6. **Run the bot** (interactive CLI):
    ```bash
    python -m src.cli
    ```
+
+## HTTP API (FastAPI)
+
+The backend also exposes the RAG pipeline over HTTP for the frontend
+(`Frontend/`). Start it with:
+
+```bash
+python -m src.api        # serves http://localhost:8000
+```
+
+| Method | Path           | Purpose                                            |
+|--------|----------------|----------------------------------------------------|
+| GET    | `/documents`   | List source documents currently in the store       |
+| POST   | `/ask`         | Ask a question → grounded answer + citations       |
+| POST   | `/ingest`      | Append a PDF (or clear + re-ingest) by filename    |
+| DELETE | `/documents`   | Wipe the vector store                              |
+| GET    | `/health`      | Liveness check                                     |
+
+Interactive docs (`swagger`) are at `http://localhost:8000/docs`.
+
+The frontend calls these endpoints through `Frontend/src/lib/api.ts`. If the API
+is not on `localhost:8000`, point the frontend at it with the `VITE_API_BASE`
+env var, e.g.:
+
+```bash
+VITE_API_BASE=http://localhost:8000 bun dev   # from Frontend/
+```
+
+`/ingest` resolves the provided filename against `data/pdfs/` — a PDF must
+already be present in that folder (or be added there) to ingest it.
 
 ## Ingestion
 
