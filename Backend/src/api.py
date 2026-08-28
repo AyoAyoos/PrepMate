@@ -253,6 +253,28 @@ def ingest_source(payload: IngestRequest) -> IngestResponse:
     return IngestResponse(documents=documents, note=note)
 
 
+def _unique_dest(folder: Path, filename: str, taken: set[str]) -> Path:
+    """Return a destination path that avoids collisions within `taken` and disk.
+
+    If `filename` already exists (on disk or in the current batch), a numeric
+    counter is appended before the extension, e.g. file.pdf -> file_1.pdf.
+    """
+    name = filename
+    if name not in taken and not (folder / name).exists():
+        taken.add(name)
+        return folder / name
+
+    stem = Path(name).stem
+    ext = Path(name).suffix
+    counter = 1
+    while True:
+        candidate = f"{stem}_{counter}{ext}"
+        if candidate not in taken and not (folder / candidate).exists():
+            taken.add(candidate)
+            return folder / candidate
+        counter += 1
+
+
 @app.post("/ingest/upload", response_model=IngestResponse)
 async def ingest_upload(
     files: list[UploadFile] = File(...),
@@ -272,6 +294,7 @@ async def ingest_upload(
     max_bytes = MAX_UPLOAD_MB * 1024 * 1024
     saved: list[Path] = []
     skipped: list[str] = []
+    taken: set[str] = set()
     for f in files:
         name = Path(f.filename or "").name  # strip any directory traversal
         ext = Path(name).suffix.lower()
@@ -285,7 +308,7 @@ async def ingest_upload(
             await f.close()
             continue
 
-        dest = PDF_DIR / name
+        dest = _unique_dest(PDF_DIR, name, taken)
         written = 0
         with dest.open("wb") as out:
             while chunk := await f.read(1 << 20):
