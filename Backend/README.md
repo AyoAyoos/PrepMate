@@ -5,7 +5,7 @@
 > `src` / `eval` packages and relative paths (`data/pdfs`, `vectorstore/`, `.env`)
 > resolve correctly.
 
-A Retrieval-Augmented Generation (RAG) Q&A demo over course/syllabus PDFs.
+A Retrieval-Augmented Generation (RAG) Q&A demo over course documents.
 Given a question, it retrieves the most relevant passages from your course
 documents and answers **exclusively from that retrieved context**, printing
 readable source citations. If nothing relevant is found, it refuses to answer
@@ -20,7 +20,7 @@ rather than hallucinate.
                     └──────────────────────────────────────────────┘
         Step 1 (once)        │                          │        Step 3 (per Q)
  ┌───────────────┐   embed   │                          │   generate
- │ data/pdfs/*.pdf ───▶ chunks ──▶ Chroma (vectorstore/)       │
+ │ data/pdfs/*.(pdf|docx|xlsx|txt|...) ───▶ chunks ──▶ Chroma (vectorstore/)       │
  │  ingest.py    │  load/split/embed     ▲                      │
  └───────────────┘                       │ similarity search    │
                     Step 2 (per Q)  ─────┘   retrieve.py        ▼
@@ -66,7 +66,8 @@ design, not an afterthought bolted into the prompt string.
    pip install -r requirements.txt
    ```
 
-3. **Drop your course PDFs** into `data/pdfs/`.
+3. **Drop your source documents** (PDF, DOCX, XLSX, TXT, MD, CSV&hellip;) into
+   `data/pdfs/` — or upload them at runtime through `/ingest/upload`.
 
 4. **Configure** — copy `.env.example` to `.env` and adjust model names,
    `RETRIEVE_K`, and `MAX_DISTANCE` if desired.
@@ -96,6 +97,7 @@ python -m src.api        # serves http://localhost:8000
 | GET    | `/documents`   | List source documents currently in the store       |
 | POST   | `/ask`         | Ask a question → grounded answer + citations       |
 | POST   | `/ingest`      | Append a PDF (or clear + re-ingest) by filename    |
+| POST   | `/ingest/upload` | Upload one or more files (multipart) and index  |
 | DELETE | `/documents`   | Wipe the vector store                              |
 | GET    | `/health`      | Liveness check                                     |
 
@@ -112,22 +114,31 @@ VITE_API_BASE=http://localhost:8000 bun dev   # from Frontend/
 `/ingest` resolves the provided filename against `data/pdfs/` — a PDF must
 already be present in that folder (or be added there) to ingest it.
 
+`/ingest/upload` accepts `multipart/form-data` with one or more `files` fields
+(plus an optional `mode` of `append` or `clear`). Uploaded files are saved to
+`data/pdfs/` and then indexed. Each file is validated against `SUPPORTED_EXTS`
+(PDF, DOCX, XLSX, XLS, TXT, MD, CSV, LOG, JSON), a per-file size limit
+(`MAX_UPLOAD_MB`, default 50), and is rejected if empty. The response includes
+a per-file breakdown: `uploaded`, `duplicates`, and `skipped`.
+
 ## Ingestion
 
 ```
 python -m src.ingest                                   # append data/pdfs/ (default)
-python -m src.ingest --source path/to/folder           # append all PDFs in a folder
-python -m src.ingest --source path/to/file.pdf         # append a single PDF
+python -m src.ingest --source path/to/folder           # append all supported files in a folder
+python -m src.ingest --source path/to/file.pdf         # append a single file
 python -m src.ingest --clear [--source <path>]         # wipe the store, then ingest
 python -m src.ingest --list                            # show which sources are stored
 python -m src.ingest --analyze                         # chunk-only report (no embedding)
 ```
 
-- **`--source <file-or-folder>`** — where to read PDFs from. Defaults to
-  `data/pdfs/` (or the `.env` `PDF_DIR`). A single `.pdf` ingests just that
-  file; a folder ingests every PDF inside it. The path must exist and contain
-  at least one PDF, otherwise ingestion fails with a clear error.
-- **Default = append.** New PDFs are added to whatever is already in the store,
+- **`--source <file-or-folder>`** — where to read documents from. Defaults to
+  `data/pdfs/` (or the `.env` `PDF_DIR`). A single supported file ingests just
+  that file; a folder ingests every supported file inside it. The path must
+  exist and contain at least one supported file, otherwise ingestion fails with
+  a clear error. Supported extensions: `.pdf .docx .xlsx .xls .txt .md .csv
+  .log .json` (see `SUPPORTED_EXTS` in `src/ingest.py`).
+- **Default = append.** New files are added to whatever is already in the store,
   so a corpus can grow across sessions. Unit 1 and Unit 2 ingested today and
   Unit 3 tomorrow all remain searchable together:
   ```bash
@@ -140,7 +151,7 @@ python -m src.ingest --analyze                         # chunk-only report (no e
   add to the current one.
 - **`--list`** — prints the source filenames currently represented in the
   store, so you can decide whether to append or clear.
-- **Duplicate guard.** On append, each PDF is matched against the store by
+- **Duplicate guard.** On append, each file is matched against the store by
   filename **and** a streaming content hash (`file_sha1`, stored in every
   chunk's metadata). A file already present is skipped with an explicit
   `Skipped: <name> (already in store, name + content-hash match)` line, so
