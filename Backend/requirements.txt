@@ -4,6 +4,8 @@ langchain-ollama
 chromadb
 pypdf
 python-dotenv
+fastapi
+uvicorn
 
 
 
