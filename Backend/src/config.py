@@ -48,6 +48,10 @@ MAX_DISTANCE = _get_float("MAX_DISTANCE", 0.70)
 VECTORSTORE_DIR = PROJECT_ROOT / _get("VECTORSTORE_DIR", "vectorstore/chroma")
 PDF_DIR = PROJECT_ROOT / _get("PDF_DIR", "data/pdfs")
 
+# Max size for a single uploaded document (in MB). Larger files are rejected
+# with a clear error to keep the local ingestion/embedding pipeline responsive.
+MAX_UPLOAD_MB = _get_int("MAX_UPLOAD_MB", 50)
+
 # Default source for ingestion when --source is not given (a folder or file).
 SOURCE_DEFAULT = PDF_DIR
 

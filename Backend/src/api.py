@@ -25,7 +25,13 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from src.config import COLLECTION_NAME, PDF_DIR, SOURCE_DEFAULT, VECTORSTORE_DIR
+from src.config import (
+    COLLECTION_NAME,
+    MAX_UPLOAD_MB,
+    PDF_DIR,
+    SOURCE_DEFAULT,
+    VECTORSTORE_DIR,
+)
 from src.generate import UNANSWERABLE, generate
 from src.ingest import SUPPORTED_EXTS, clear_store, ingest, list_sources
 from src.retrieve import has_any_documents, retrieve
@@ -260,6 +266,7 @@ async def ingest_upload(
     do_clear = mode == "clear"
     PDF_DIR.mkdir(parents=True, exist_ok=True)
 
+    max_bytes = MAX_UPLOAD_MB * 1024 * 1024
     saved: list[Path] = []
     skipped: list[str] = []
     for f in files:
@@ -268,17 +275,33 @@ async def ingest_upload(
 
         if not name or name in {".", ".."}:
             skipped.append(f.filename or "(unnamed)")
+            await f.close()
             continue
         if ext not in SUPPORTED_EXTS:
             skipped.append(f"{name} (unsupported type; must be one of {sorted(SUPPORTED_EXTS)})")
+            await f.close()
             continue
 
         dest = PDF_DIR / name
+        written = 0
         with dest.open("wb") as out:
             while chunk := await f.read(1 << 20):
+                written += len(chunk)
+                if written > max_bytes:
+                    break
                 out.write(chunk)
-        saved.append(dest)
         await f.close()
+
+        if written == 0:
+            skipped.append(f"{name} (file is empty)")
+            dest.unlink(missing_ok=True)
+            continue
+        if written > max_bytes:
+            skipped.append(f"{name} (exceeds {MAX_UPLOAD_MB} MB limit)")
+            dest.unlink(missing_ok=True)
+            continue
+
+        saved.append(dest)
 
     if not saved:
         raise HTTPException(
@@ -298,7 +321,7 @@ async def ingest_upload(
     elif added == 0:
         note = "Uploaded file(s) already in the store (name + content-hash match)."
     else:
-        note = f"{len(saved)} file(s) appended to the existing vector store."
+        note = f"{added} file(s) appended to the existing vector store."
 
     if skipped:
         note += " Skipped: " + ", ".join(skipped)
