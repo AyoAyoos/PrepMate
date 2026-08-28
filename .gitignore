@@ -14,6 +14,9 @@ venv/
 # Data (source PDFs live in data/pdfs but are usually committed; keep them if you want)
 # data/pdfs/*.pdf
 
+# Runtime logs (uvicorn, etc.)
+*.log
+
 # OS / editor
 .DS_Store
 Thumbs.db
