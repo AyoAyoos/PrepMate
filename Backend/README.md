@@ -1,5 +1,10 @@
 # Ask-the-Syllabus Bot (RAG)
 
+> **Working directory:** This backend lives in the `Backend/` folder. Run all
+> `python -m ...` commands from inside `Backend/` (e.g. `cd Backend`) so the
+> `src` / `eval` packages and relative paths (`data/pdfs`, `vectorstore/`, `.env`)
+> resolve correctly.
+
 A Retrieval-Augmented Generation (RAG) Q&A demo over course/syllabus PDFs.
 Given a question, it retrieves the most relevant passages from your course
 documents and answers **exclusively from that retrieved context**, printing
