@@ -84,6 +84,9 @@ class IngestRequest(BaseModel):
 class IngestResponse(BaseModel):
     documents: list[StoredDocument]
     note: str = ""
+    uploaded: int = 0  # files newly added to the store
+    duplicates: int = 0  # files already present (name + content-hash)
+    skipped: list[str] = []  # files rejected (unsupported/empty/oversized)
 
 
 # --------------------------------------------------------------------------- #
@@ -316,6 +319,7 @@ async def ingest_upload(
 
     documents = _list_documents()
 
+    duplicates = 0 if do_clear else max(len(saved) - added, 0)
     if do_clear:
         note = f"Vector store cleared and re-indexed with {len(saved)} new file(s)."
     elif added == 0:
@@ -326,7 +330,13 @@ async def ingest_upload(
     if skipped:
         note += " Skipped: " + ", ".join(skipped)
 
-    return IngestResponse(documents=documents, note=note)
+    return IngestResponse(
+        documents=documents,
+        note=note,
+        uploaded=added,
+        duplicates=duplicates,
+        skipped=skipped,
+    )
 
 
 @app.delete("/documents", response_model=IngestResponse)

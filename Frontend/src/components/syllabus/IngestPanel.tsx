@@ -35,6 +35,11 @@ export function IngestPanel({
   const [mode, setMode] = useState<IngestMode>("append");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [summary, setSummary] = useState<{
+    uploaded: number;
+    duplicates: number;
+    skipped: string[];
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   function pick() {
@@ -43,22 +48,33 @@ export function IngestPanel({
 
   function onFilesChanged(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? []);
-    if (picked.length) setPending((prev) => [...prev, ...picked]);
+    if (picked.length) {
+      setPending((prev) => [...prev, ...picked]);
+      setSummary(null);
+      setNote(null);
+    }
     e.target.value = "";
   }
 
   function removeFile(name: string) {
     setPending((prev) => prev.filter((f) => f.name !== name));
+    setSummary(null);
   }
 
   async function add() {
     if (!pending.length || busy) return;
     setBusy(true);
     setNote(null);
+    setSummary(null);
     try {
       const res = await uploadSources(pending, mode);
       onChange(res.documents);
       setNote(res.note);
+      setSummary({
+        uploaded: res.uploaded ?? 0,
+        duplicates: res.duplicates ?? 0,
+        skipped: res.skipped ?? [],
+      });
       setPending([]);
     } catch (err) {
       setNote(err instanceof Error ? err.message : String(err));
@@ -70,6 +86,7 @@ export function IngestPanel({
   async function reset() {
     setBusy(true);
     setNote(null);
+    setSummary(null);
     try {
       const res = await clearStore();
       onChange(res.documents);
@@ -185,6 +202,23 @@ export function IngestPanel({
             </p>
           )}
         </div>
+
+        {summary && (
+          <div className="space-y-1 border-2 border-foreground bg-muted px-3 py-2 text-xs font-semibold">
+            <div className="flex gap-4 uppercase tracking-wide">
+              <span className="text-primary">Added: {summary.uploaded}</span>
+              <span className="text-muted-foreground">Duplicates: {summary.duplicates}</span>
+              <span className="text-destructive">Skipped: {summary.skipped.length}</span>
+            </div>
+            {summary.skipped.length > 0 && (
+              <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-muted-foreground">
+                {summary.skipped.map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {note && (
           <p className="border-l-4 border-primary bg-muted px-3 py-2 text-xs font-semibold">

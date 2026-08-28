@@ -32,6 +32,9 @@ export type IngestMode = "append" | "clear";
 export type IngestResponse = {
   documents: StoredDocument[];
   note: string;
+  uploaded?: number;
+  duplicates?: number;
+  skipped?: string[];
 };
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "http://localhost:8000";
