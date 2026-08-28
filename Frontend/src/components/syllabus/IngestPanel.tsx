@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { useRef, useState } from "react";
+import { Loader2, Paperclip, Trash2, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -8,9 +8,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { clearStore, ingestSource, type IngestMode, type StoredDocument } from "@/lib/api";
+import { clearStore, uploadSources, type IngestMode, type StoredDocument } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+const ACCEPT =
+  ".pdf,.docx,.txt,.md,.csv,.xlsx,.xls,.log,.json";
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export function IngestPanel({
   open,
@@ -23,27 +31,54 @@ export function IngestPanel({
   documents: StoredDocument[];
   onChange: (docs: StoredDocument[]) => void;
 }) {
-  const [filename, setFilename] = useState("");
+  const [pending, setPending] = useState<File[]>([]);
   const [mode, setMode] = useState<IngestMode>("append");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  async function run() {
-    if (!filename.trim() || busy) return;
+  function pick() {
+    fileRef.current?.click();
+  }
+
+  function onFilesChanged(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? []);
+    if (picked.length) setPending((prev) => [...prev, ...picked]);
+    e.target.value = "";
+  }
+
+  function removeFile(name: string) {
+    setPending((prev) => prev.filter((f) => f.name !== name));
+  }
+
+  async function add() {
+    if (!pending.length || busy) return;
     setBusy(true);
-    const res = await ingestSource(filename, mode);
-    onChange(res.documents);
-    setNote(res.note);
-    setFilename("");
-    setBusy(false);
+    setNote(null);
+    try {
+      const res = await uploadSources(pending, mode);
+      onChange(res.documents);
+      setNote(res.note);
+      setPending([]);
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function reset() {
     setBusy(true);
-    const res = await clearStore();
-    onChange(res.documents);
-    setNote(res.note);
-    setBusy(false);
+    setNote(null);
+    try {
+      const res = await clearStore();
+      onChange(res.documents);
+      setNote(res.note);
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -51,9 +86,10 @@ export function IngestPanel({
       <DialogContent className="max-w-lg gap-5 rounded-none border-2 border-foreground shadow-brutal">
         <DialogHeader>
           <DialogTitle className="text-xl font-black uppercase tracking-tight">
-            Ingest Source
+            Add documents
           </DialogTitle>
           <DialogDescription className="font-semibold">
+            Pick files from your computer (PDF, DOCX, XLSX, TXT, MD, CSV&hellip;).
             Append adds to the existing index. Clear wipes the store and re-indexes from scratch.
           </DialogDescription>
         </DialogHeader>
@@ -75,19 +111,61 @@ export function IngestPanel({
           ))}
         </div>
 
-        <div className="flex gap-2">
-          <Input
-            value={filename}
-            onChange={(e) => setFilename(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && run()}
-            placeholder="Week04_Embeddings.pdf"
-            className="rounded-none border-2 border-foreground font-mono text-sm shadow-none focus-visible:ring-0"
-          />
-          <Button variant="brutal" onClick={run} disabled={busy || !filename.trim()}>
-            {busy ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            Add
+        <input
+          ref={fileRef}
+          type="file"
+          accept={ACCEPT}
+          multiple
+          className="hidden"
+          onChange={onFilesChanged}
+        />
+
+        {pending.length === 0 ? (
+          <Button
+            variant="brutal"
+            className="w-full"
+            onClick={pick}
+            disabled={busy}
+          >
+            <Paperclip className="size-4" />
+            Add files…
           </Button>
-        </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="max-h-36 space-y-1.5 overflow-y-auto">
+              {pending.map((f) => (
+                <div
+                  key={f.name}
+                  className="flex items-center justify-between gap-3 border-2 border-foreground bg-card px-3 py-1.5"
+                >
+                  <span className="truncate font-mono text-xs font-bold">{f.name}</span>
+                  <span className="shrink-0 text-[11px] font-semibold uppercase text-muted-foreground">
+                    {formatBytes(f.size)}
+                  </span>
+                  {!busy && (
+                    <button
+                      onClick={() => removeFile(f.name)}
+                      className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+                      aria-label={`Remove ${f.name}`}
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="brutalOutline" className="flex-1" onClick={pick} disabled={busy}>
+                <Paperclip className="size-4" />
+                Add more
+              </Button>
+              <Button variant="brutal" className="flex-1" onClick={add} disabled={busy}>
+                {busy ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />}
+                Upload {pending.length} file{pending.length > 1 ? "s" : ""}
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="max-h-52 space-y-2 overflow-y-auto">
           {documents.map((d) => (
