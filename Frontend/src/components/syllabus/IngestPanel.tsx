@@ -14,6 +14,14 @@ import { cn } from "@/lib/utils";
 const ACCEPT =
   ".pdf,.docx,.txt,.md,.csv,.xlsx,.xls,.log,.json";
 
+const ACCEPT_EXTENSIONS = ACCEPT.split(",").map((e) => e.toLowerCase());
+const MAX_FILE_MB = 50;
+
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot === -1 ? "" : name.slice(dot).toLowerCase();
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -49,9 +57,27 @@ export function IngestPanel({
   function onFilesChanged(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? []);
     if (picked.length) {
-      setPending((prev) => [...prev, ...picked]);
+      const valid: File[] = [];
+      const rejected: string[] = [];
+      for (const f of picked) {
+        const ext = extensionOf(f.name);
+        if (!ACCEPT_EXTENSIONS.includes(ext)) {
+          rejected.push(`${f.name} (unsupported type)`);
+        } else if (f.size > MAX_FILE_MB * 1024 * 1024) {
+          rejected.push(`${f.name} (exceeds ${MAX_FILE_MB} MB)`);
+        } else if (f.size === 0) {
+          rejected.push(`${f.name} (empty file)`);
+        } else {
+          valid.push(f);
+        }
+      }
+      if (valid.length) {
+        setPending((prev) => [...prev, ...valid]);
+      }
+      if (rejected.length) {
+        setNote(`Couldn't add: ${rejected.join(", ")}`);
+      }
       setSummary(null);
-      setNote(null);
     }
     e.target.value = "";
   }
