@@ -7,6 +7,8 @@ Endpoints (contract matches Frontend/src/lib/api.ts):
     GET    /documents   -> list of currently stored source documents
     POST   /ask         -> ask a question, get a grounded answer + citations
     POST   /ingest      -> append a PDF (or clear + re-ingest) by filename
+    POST   /ingest/upload -> append user-uploaded files (multipart, multiple,
+                           any supported type: pdf/docx/xlsx/txt/md/csv/...)
     DELETE /documents   -> wipe the vector store
 
 Run with:
@@ -19,13 +21,13 @@ from pathlib import Path
 from typing import Any, Optional
 
 import chromadb
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.config import COLLECTION_NAME, PDF_DIR, SOURCE_DEFAULT, VECTORSTORE_DIR
 from src.generate import UNANSWERABLE, generate
-from src.ingest import clear_store, ingest, list_sources
+from src.ingest import SUPPORTED_EXTS, clear_store, ingest, list_sources
 from src.retrieve import has_any_documents, retrieve
 
 app = FastAPI(title="Ask-the-Syllabus Bot API", version="1.0.0")
@@ -33,12 +35,7 @@ app = FastAPI(title="Ask-the-Syllabus Bot API", version="1.0.0")
 # Allow the local frontend dev/preview servers (and anything local) to call the API.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
-    ],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -243,6 +240,68 @@ def ingest_source(payload: IngestRequest) -> IngestResponse:
         note = f"{filename} is already in the store (name + content-hash match)."
     else:
         note = f"{filename} appended to the existing vector store."
+
+    return IngestResponse(documents=documents, note=note)
+
+
+@app.post("/ingest/upload", response_model=IngestResponse)
+async def ingest_upload(
+    files: list[UploadFile] = File(...),
+    mode: str = Form("append"),
+) -> IngestResponse:
+    """Accept user-uploaded files (multipart/form-data) and index them.
+
+    Each file is validated, saved into PDF_DIR, then run through the ingestion
+    pipeline. mode is "append" (default) or "clear".
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files were uploaded.")
+
+    do_clear = mode == "clear"
+    PDF_DIR.mkdir(parents=True, exist_ok=True)
+
+    saved: list[Path] = []
+    skipped: list[str] = []
+    for f in files:
+        name = Path(f.filename or "").name  # strip any directory traversal
+        ext = Path(name).suffix.lower()
+
+        if not name or name in {".", ".."}:
+            skipped.append(f.filename or "(unnamed)")
+            continue
+        if ext not in SUPPORTED_EXTS:
+            skipped.append(f"{name} (unsupported type; must be one of {sorted(SUPPORTED_EXTS)})")
+            continue
+
+        dest = PDF_DIR / name
+        with dest.open("wb") as out:
+            while chunk := await f.read(1 << 20):
+                out.write(chunk)
+        saved.append(dest)
+        await f.close()
+
+    if not saved:
+        raise HTTPException(
+            status_code=400,
+            detail="No uploadable files provided. " + ("Skipped: " + ", ".join(skipped) if skipped else ""),
+        )
+
+    try:
+        added = ingest(PDF_DIR, clear=do_clear)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}")
+
+    documents = _list_documents()
+
+    if do_clear:
+        note = f"Vector store cleared and re-indexed with {len(saved)} new file(s)."
+    elif added == 0:
+        note = "Uploaded file(s) already in the store (name + content-hash match)."
+    else:
+        note = f"{len(saved)} file(s) appended to the existing vector store."
+
+    if skipped:
+        note += " Skipped: " + ", ".join(skipped)
 
     return IngestResponse(documents=documents, note=note)
 
