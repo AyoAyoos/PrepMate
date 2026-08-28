@@ -13,12 +13,13 @@ PrepMate/
 ├── Frontend/   React + TypeScript frontend (chat UI over the backend)
 ```
 
-Each subfolder has its own README with full setup and usage:
+Subprojects:
 
-- **[Backend/README.md](Backend/README.md)** — Python RAG pipeline: `src/ingest.py`,
-  `src/retrieve.py`, `src/generate.py`, `src/cli.py`, plus the `eval/` harness.
-  Run all `python -m ...` commands from inside `Backend/`.
-- **[Frontend/README.md](Frontend/README.md)** — React/TanStack chat interface.
+- **`Backend/`** — Python RAG pipeline (`src/ingest.py`, `src/retrieve.py`,
+  `src/generate.py`, `src/cli.py`), a FastAPI HTTP layer (`src/api.py`), and the
+  `eval/` harness. See [Backend/README.md](Backend/README.md).
+- **`Frontend/`** — React/TanStack chat interface (source in `Frontend/src/`),
+  consuming the backend API at `src/lib/api.ts`.
 
 ## Quick start (backend)
 
@@ -34,5 +35,4 @@ python -m src.cli                 # start the chat bot
 ```
 
 For the end-to-end flow, detailed options, and evaluation, see
-[Backend/README.md](Backend/README.md) and
-[manual.md](Backend/manual.md).
+[Backend/README.md](Backend/README.md).
