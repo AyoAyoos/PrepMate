@@ -82,6 +82,36 @@ export async function ingestSource(
   });
 }
 
+/** POST /ingest/upload  (multipart) — upload one or more files from disk */
+export async function uploadSources(
+  files: File[],
+  mode: IngestMode = "append",
+): Promise<IngestResponse> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  form.append("mode", mode);
+
+  const res = await fetch(`${API_BASE}/ingest/upload`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    let detail = `HTTP ${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) {
+        detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      }
+    } catch {
+      // keep fallback
+    }
+    throw new Error(detail);
+  }
+
+  return (await res.json()) as IngestResponse;
+}
+
 /** DELETE /documents */
 export async function clearStore(): Promise<IngestResponse> {
   return request<IngestResponse>("/documents", { method: "DELETE" });
