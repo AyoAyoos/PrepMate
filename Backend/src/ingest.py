@@ -1,13 +1,13 @@
-"""Step 1 of the RAG pipeline: ingest PDFs.
+"""Step 1 of the RAG pipeline: ingest source documents.
 
-Loads PDFs (a single file or a whole folder), splits them into overlapping
-text chunks, embeds the chunks with OllamaEmbeddings, and persists them in a
-local Chroma vector store.
+Loads supported files (PDF, DOCX, XLSX, TXT, MD, CSV, ...) — a single file or
+a whole folder — splits them into overlapping text chunks, embeds the chunks
+with OllamaEmbeddings, and persists them in a local Chroma vector store.
 
 Features:
-  * --source <file-or-folder>  ingest one PDF or all PDFs in a folder.
-                               Defaults to data/pdfs/ (SOURCE_DEFAULT).
-  * default: APPEND            new PDFs are added to whatever is already in
+  * --source <file-or-folder>  ingest one file or all supported files in a
+                               folder. Defaults to data/pdfs/ (SOURCE_DEFAULT).
+  * default: APPEND            new files are added to whatever is already in
                                the store, so a corpus can grow across
                                sessions (Unit 1 + 2 today, Unit 3 tomorrow).
   * --clear                    wipe the existing collection before ingesting
@@ -15,7 +15,7 @@ Features:
   * --list                     print which source files are currently in the
                                store, without ingesting anything.
 
-Duplicate guard: a PDF already in the store (matched by name + content hash)
+Duplicate guard: a file already in the store (matched by name + content hash)
 is skipped with a warning on append, so re-runs don't duplicate chunks.
 
 Usage:
@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 import chromadb
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -48,12 +48,30 @@ from src.config import (
     VECTORSTORE_DIR,
 )
 
+# File extensions the ingestion pipeline can parse into text for embedding.
+# Kept intentionally lightweight (no fragile `unstructured` dependency):
+#   pdf   -> pypdf        (already a project dependency)
+#   docx  -> python-docx   (added dep)
+#   xlsx/xls -> openpyxl   (added dep)
+#   txt/md/csv/log/json -> plain text readers (stdlib)
+SUPPORTED_EXTS = {
+    ".pdf",
+    ".docx",
+    ".txt",
+    ".md",
+    ".csv",
+    ".xlsx",
+    ".xls",
+    ".log",
+    ".json",
+}
 
-def resolve_pdf_files(source: Path | str) -> list[Path]:
-    """Resolve --source into a list of PDF files, validating existence.
+
+def resolve_source_files(source: Path | str) -> list[Path]:
+    """Resolve --source into a list of supported files, validating existence.
 
     Raises FileNotFoundError with a clear message if the path is missing or
-    contains no PDFs.
+    holds no supported files.
     """
     p = Path(source)
 
@@ -61,15 +79,25 @@ def resolve_pdf_files(source: Path | str) -> list[Path]:
         raise FileNotFoundError(f"Source path does not exist: {p}")
 
     if p.is_file():
-        if p.suffix.lower() != ".pdf":
-            raise FileNotFoundError(f"Source is not a PDF file: {p}")
+        if p.suffix.lower() not in SUPPORTED_EXTS:
+            ext = p.suffix.lower() or "(none)"
+            raise FileNotFoundError(
+                f"Unsupported file type '{ext}'. Supported: {sorted(SUPPORTED_EXTS)}"
+            )
         files = [p]
     else:
-        files = sorted(p.glob("*.pdf"))
+        files = sorted(
+            fn for fn in p.iterdir() if fn.is_file() and fn.suffix.lower() in SUPPORTED_EXTS
+        )
 
     if not files:
-        raise FileNotFoundError(f"No PDF files found at: {p}")
+        raise FileNotFoundError(f"No supported files found at: {p}")
     return files
+
+
+# Kept as an alias so existing callers/tests that referenced the old name
+# still work. It now accepts any supported file type, not just PDFs.
+resolve_pdf_files = resolve_source_files
 
 
 def _get_client() -> chromadb.ClientAPI:
@@ -113,23 +141,68 @@ def _file_sha1(path: Path) -> str:
     return h.hexdigest()
 
 
-def load_pdfs(files: list[Path]) -> list:
-    """Load PDF files into LangChain documents (one per page).
+def _read_as_documents(path: Path) -> list[Document]:
+    """Parse a single file into LangChain documents based on its extension."""
+    ext = path.suffix.lower()
 
-    Tags each page with source filename and a content hash (file_sha1) used
-    for duplicate detection. Citation metadata (source, page) is unchanged.
+    if ext == ".pdf":
+        from langchain_community.document_loaders import PyPDFLoader
+
+        return PyPDFLoader(str(path)).load()
+
+    if ext == ".docx":
+        import docx
+
+        text = "\n".join(p.text for p in docx.Document(str(path)).paragraphs if p.text)
+        return [Document(page_content=text)]
+
+    if ext in (".xlsx", ".xls"):
+        import openpyxl
+
+        wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+        rows: list[str] = []
+        for sheet in wb.worksheets:
+            for row in sheet.iter_rows(values_only=True):
+                cells = [str(c) for c in row if c is not None and str(c).strip()]
+                if cells:
+                    rows.append("\t".join(cells))
+        wb.close()
+        return [Document(page_content="\n".join(rows))]
+
+    # Plain-text formats (txt, md, csv, log, json). Read with encoding fallback.
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        content = path.read_text(encoding="latin-1")
+    return [Document(page_content=content)]
+
+
+def load_documents(files: list[Path]) -> list:
+    """Load supported files into LangChain documents.
+
+    Tags each page/document with source filename and a content hash (file_sha1)
+    used for duplicate detection. Citation metadata (source, page) is unchanged
+    for PDFs; other formats get page=0.
     """
     documents = []
-    for pdf in files:
-        print(f"Loading {pdf.name} ...")
-        loader = PyPDFLoader(str(pdf))
-        pages = loader.load()
-        digest = _file_sha1(pdf)
+    for src in files:
+        print(f"Loading {src.name} ...")
+        digest = _file_sha1(src)
+        try:
+            pages = _read_as_documents(src)
+        except Exception as exc:
+            print(f"  ERROR loading {src.name}: {exc}")
+            continue
         for page in pages:
-            page.metadata["source"] = pdf.name
+            page.metadata["source"] = src.name
             page.metadata["file_sha1"] = digest
+            page.metadata.setdefault("page", 0)
         documents.extend(pages)
     return documents
+
+
+# Kept as an alias for any existing callers/tests referencing the old name.
+load_pdfs = load_documents
 
 
 def split_documents(documents: list) -> tuple:
@@ -173,10 +246,10 @@ def clear_store() -> None:
 
 
 def ingest(source: Path | str, clear: bool = False) -> int:
-    """Resolve, filter, and ingest PDFs; return the number of files added."""
+    """Resolve, filter, and ingest supported source files; return count added."""
     # Validate the source FIRST so that a bad --source can never trigger the
-    # destructive --clear wipe (resolve_pdf_files raises before clear_store).
-    files = resolve_pdf_files(source)
+    # destructive --clear wipe (resolve_source_files raises before clear_store).
+    files = resolve_source_files(source)
 
     if clear:
         clear_store()
@@ -197,7 +270,7 @@ def ingest(source: Path | str, clear: bool = False) -> int:
         print(f"Nothing new to ingest from {source}.")
         return 0
 
-    documents = load_pdfs(pending)
+    documents = load_documents(pending)
     chunks, oversized = split_documents(documents)
     pages = len(documents)
     print(f"Pages: {pages} | Chunks: {len(chunks)} | "
@@ -215,8 +288,8 @@ def ingest(source: Path | str, clear: bool = False) -> int:
 
 def analyze(source: Path | str) -> None:
     """Split-only diagnostic: report chunking without embedding."""
-    files = resolve_pdf_files(source)
-    documents = load_pdfs(files)
+    files = resolve_source_files(source)
+    documents = load_documents(files)
     if not documents:
         return
 
