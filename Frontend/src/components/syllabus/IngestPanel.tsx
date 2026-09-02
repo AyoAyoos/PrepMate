@@ -153,7 +153,7 @@ export function IngestPanel({
                   : "bg-card hover:bg-muted",
               )}
             >
-              {m === "append" ? "Append (default)" : "Clear + reset"}
+              {m === "append" ? "Add new" : "Replace all"}
             </button>
           ))}
         </div>
