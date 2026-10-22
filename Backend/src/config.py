@@ -36,7 +36,16 @@ def _get_float(name: str, default: float) -> float:
 OLLAMA_HOST = _get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_EMBED_MODEL = _get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_LLM_MODEL = _get("OLLAMA_LLM_MODEL", "llama3.2")
-RETRIEVE_K = _get_int("RETRIEVE_K", 4)
+RETRIEVE_K = _get_int("RETRIEVE_K", 5)
+
+# Rewrite fragments/typos into a clean question before retrieval.
+QUERY_REWRITE = _get("QUERY_REWRITE", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+# Slides are tiny, so definitions and examples often sit on adjacent pages.
+# For the top NEIGHBOR_TOP_N hits, also give the LLM the NEIGHBOR_PAGES pages on
+# each side (context only: they are not gated by distance or cited).
+NEIGHBOR_PAGES = _get_int("NEIGHBOR_PAGES", 1)
+NEIGHBOR_TOP_N = _get_int("NEIGHBOR_TOP_N", 2)
 
 # Relevance gate on Chroma's L2/HNSW distance (space='l2'): LOWER = more
 # similar. Empirically calibrated on this corpus: answerable top-hits are

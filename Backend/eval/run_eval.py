@@ -31,7 +31,7 @@ import re
 from pathlib import Path
 
 from src.generate import generate
-from src.retrieve import retrieve
+from src.retrieve import neighbor_chunks, retrieve
 from src.citations import render_citations
 from src.config import MAX_DISTANCE
 
@@ -101,6 +101,9 @@ def run() -> None:
         for doc, score in retrieved:
             if score is not None and score <= MAX_DISTANCE:
                 source_parts.append(doc.page_content)
+        # generate() also shows the LLM neighboring slides, so they count as source.
+        source_parts += [d.page_content for d in neighbor_chunks(
+            [(d, s) for d, s in retrieved if s is not None and s <= MAX_DISTANCE])]
         source_text = "\n".join(source_parts)
 
         tripwire = _number_tripwire(answer.text, source_text) if want_grounded else []

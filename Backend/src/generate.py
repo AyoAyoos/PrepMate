@@ -13,6 +13,8 @@ from langchain_ollama import OllamaLLM
 
 from src.citations import format_citations
 from src.config import MAX_DISTANCE, OLLAMA_HOST, OLLAMA_LLM_MODEL
+from src.query import rewrite_query
+from src.retrieve import neighbor_chunks
 
 
 @dataclass
@@ -35,13 +37,24 @@ NO_RETRIEVAL = (
 REFUSAL_MARKER = "This isn't covered in the provided materials."
 
 SYSTEM_PROMPT = (
-    "You are a helpful assistant that answers questions ONLY from the provided "
-    "context. Follow these rules in order:\n"
+    "You are a study assistant that answers questions ONLY from the provided "
+    "course context. Follow these rules in order:\n"
     "1. Answer only using the provided context — use NO outside knowledge.\n"
     f"2. If the context does not contain the answer, reply with exactly: "
     f'"{REFUSAL_MARKER}" — do not hedge into a partial guess.\n'
-    "3. When you do answer, stay close to what the context actually says; do not "
-    "generalize into claims broader than the context states."
+    "3. The question may be a fragment or contain typos (e.g. \"what noun\"); "
+    "read it as the obvious course term and answer that.\n"
+    "4. Answer in 2-4 complete sentences: define the term, then add an example "
+    "or key distinction only if the context states one. Never reply with just "
+    "the term.\n"
+    "5. Keep the context's wording and distinctions (if it says \"both X and Y\", "
+    "do not write \"X or Y\"). Do not add numbers, examples or claims that are "
+    "not in the context.\n\n"
+    "### EXAMPLE\n"
+    "Context: A noun is a word that names a person, place or thing, e.g. 'dog'.\n"
+    "Question: what noun\n"
+    "Answer: A noun is a word that names a person, place or thing. For example, "
+    "'dog' is a noun."
 )
 
 
@@ -81,8 +94,19 @@ def generate(retrieved: list, question: str) -> Answer:
     if not kept:
         return Answer(text=UNANSWERABLE, grounded=False, note=NO_RETRIEVAL)
 
-    context = "\n\n---\n\n".join(doc.page_content for doc, _ in kept)
-    prompt = build_prompt(question, context)
+    # Context = gated hits + their neighboring slides (context only, never
+    # cited), read in document order so a definition precedes its example.
+    blocks = [(doc.metadata.get("source", ""), doc.metadata.get("page", 0), doc.page_content) for doc, _ in kept]
+    try:
+        blocks += [
+            (d.metadata.get("source", ""), d.metadata.get("page", 0), d.page_content)
+            for d in neighbor_chunks(kept)
+        ]
+    except Exception:
+        pass  # neighbors are a bonus; the gated hits alone are enough to answer
+    blocks.sort(key=lambda b: (b[0], b[1]))
+    context = "\n\n---\n\n".join(text for _, _, text in blocks)
+    prompt = build_prompt(rewrite_query(question), context)
 
     citations = format_citations(kept)
 
