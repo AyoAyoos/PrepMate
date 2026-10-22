@@ -15,7 +15,7 @@ Features:
   * --list                     print which source files are currently in the
                                store, without ingesting anything.
 
-Duplicate guard: a file already in the store (matched by name + content hash)
+Duplicate guard: a file already in the store (matched by content hash, even under a new name)
 is skipped with a warning on append, so re-runs don't duplicate chunks.
 
 Usage:
@@ -104,8 +104,12 @@ def _get_client() -> chromadb.ClientAPI:
     return chromadb.PersistentClient(path=str(VECTORSTORE_DIR))
 
 
-def _existing_keys() -> set[tuple[str, str]]:
-    """Return {(source_name, file_sha1)} already present in the store."""
+def existing_hashes() -> set[str]:
+    """Return the content hashes (file_sha1) of every file already in the store.
+
+    Content alone identifies a duplicate: the same file re-uploaded under a new
+    name (e.g. "notes_1.pdf") must not be indexed twice.
+    """
     client = _get_client()
     try:
         col = client.get_collection(COLLECTION_NAME)
@@ -113,10 +117,7 @@ def _existing_keys() -> set[tuple[str, str]]:
     except Exception:
         return set()
     metas = data.get("metadatas") or []
-    return {
-        (m["source"], m["file_sha1"]) for m in metas
-        if m and m.get("source") and m.get("file_sha1")
-    }
+    return {m["file_sha1"] for m in metas if m and m.get("file_sha1")}
 
 
 def list_sources() -> list[str]:
@@ -132,7 +133,7 @@ def list_sources() -> list[str]:
     return sources
 
 
-def _file_sha1(path: Path) -> str:
+def file_sha1(path: Path) -> str:
     """Streaming SHA-1 of a file, used for duplicate detection."""
     h = hashlib.sha1()
     with open(path, "rb") as fh:
@@ -187,7 +188,7 @@ def load_documents(files: list[Path]) -> list:
     documents = []
     for src in files:
         print(f"Loading {src.name} ...")
-        digest = _file_sha1(src)
+        digest = file_sha1(src)
         try:
             pages = _read_as_documents(src)
         except Exception as exc:
@@ -256,17 +257,19 @@ def ingest(source: Path | str, clear: bool = False) -> int:
         pending = files
         dupes = []
     else:
-        existing = _existing_keys()
+        seen = existing_hashes()
         pending, dupes = [], []
         for f in files:
-            if (f.name, _file_sha1(f)) in existing:
+            digest = file_sha1(f)
+            if digest in seen:
                 dupes.append(f)
             else:
+                seen.add(digest)  # also catches identical copies within this batch
                 pending.append(f)
 
     if not pending:
         for f in dupes:
-            print(f"  Skipped: {f.name} (already in store, name + content-hash match)")
+            print(f"  Skipped: {f.name} (already in store, content-hash match)")
         print(f"Nothing new to ingest from {source}.")
         return 0
 
@@ -282,7 +285,7 @@ def ingest(source: Path | str, clear: bool = False) -> int:
           f"to '{COLLECTION_NAME}' in {VECTORSTORE_DIR}")
 
     for f in dupes:
-        print(f"  Skipped: {f.name} (already in store, name + content-hash match)")
+        print(f"  Skipped: {f.name} (already in store, content-hash match)")
     return len(pending)
 
 

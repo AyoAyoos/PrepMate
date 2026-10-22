@@ -33,7 +33,7 @@ from src.config import (
     VECTORSTORE_DIR,
 )
 from src.generate import UNANSWERABLE, generate
-from src.ingest import SUPPORTED_EXTS, clear_store, ingest, list_sources
+from src.ingest import SUPPORTED_EXTS, clear_store, existing_hashes, file_sha1, ingest, list_sources
 from src.retrieve import has_any_documents, retrieve
 
 app = FastAPI(title="Ask-the-Syllabus Bot API", version="1.0.0")
@@ -295,6 +295,8 @@ async def ingest_upload(
     saved: list[Path] = []
     skipped: list[str] = []
     taken: set[str] = set()
+    known: set[str] = set() if do_clear else existing_hashes()
+    already_indexed: list[str] = []
     for f in files:
         name = Path(f.filename or "").name  # strip any directory traversal
         ext = Path(name).suffix.lower()
@@ -327,7 +329,25 @@ async def ingest_upload(
             dest.unlink(missing_ok=True)
             continue
 
+        # Same content as a file we already have (even under another name):
+        # drop the copy instead of leaving "name_1.pdf" clutter on disk.
+        digest = file_sha1(dest)
+        if digest in known:
+            dest.unlink(missing_ok=True)
+            already_indexed.append(name)
+            continue
+        known.add(digest)
+
         saved.append(dest)
+
+    if not saved and already_indexed and not skipped:
+        return IngestResponse(
+            documents=_list_documents(),
+            note="Already in the store (identical content): " + ", ".join(already_indexed),
+            uploaded=0,
+            duplicates=len(already_indexed),
+            skipped=[],
+        )
 
     if not saved:
         raise HTTPException(
@@ -342,7 +362,7 @@ async def ingest_upload(
 
     documents = _list_documents()
 
-    duplicates = 0 if do_clear else max(len(saved) - added, 0)
+    duplicates = 0 if do_clear else max(len(saved) - added, 0) + len(already_indexed)
     if do_clear:
         note = f"Vector store cleared and re-indexed with {len(saved)} new file(s)."
     elif added == 0:
