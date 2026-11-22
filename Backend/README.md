@@ -20,7 +20,7 @@ rather than hallucinate.
                     └──────────────────────────────────────────────┘
         Step 1 (once)        │                          │        Step 3 (per Q)
  ┌───────────────┐   embed   │                          │   generate
- │ data/pdfs/*.(pdf|docx|xlsx|txt|...) ───▶ chunks ──▶ Chroma (vectorstore/)       │
+ │ data/pdfs/*.(pdf|docx|xlsx|txt|...) ───▶ chunks ──▶ DuckDB + HNSW (vectorstore/)       │
  │  ingest.py    │  load/split/embed     ▲                      │
  └───────────────┘                       │ similarity search    │
                     Step 2 (per Q)  ─────┘   retrieve.py        ▼
@@ -30,7 +30,7 @@ rather than hallucinate.
 
 - **Step 1 — Ingest (`src/ingest.py`)** loads every PDF, splits it into
   overlapping text chunks, embeds the chunks, and persists them to a local
-  Chroma store. Runs *once* (or whenever documents change).
+  DuckDB + HNSW course index. Runs *once* (or whenever documents change).
 - **Step 2 — Retrieve (`src/retrieve.py`)** embeds the question with the same
   model and does a similarity search to pull the top-k chunks. Runs *per question*.
 - **Step 3 — Generate (`src/generate.py`)** checks each retrieved chunk against
@@ -40,6 +40,12 @@ rather than hallucinate.
   similarity score) into readable `[1] syllabus.pdf — p.3 (sim 0.82)` lines,
   making the grounding explicit to the user.
 - **CLI (`src/cli.py`)** is an interactive loop that glues Steps 2–3 together.
+
+The same DuckDB + HNSW index powers typed chat and the bundled Voice Assistant.
+The voice process has **no access to course files**; its `syllabus_search` tool
+calls this backend's `/ask` endpoint, which performs retrieval and generation
+against the shared store. `GET /course-index/status` reports the engine, HNSW
+status, chunk count, and document count for both UIs.
 
 ### Why ingest and query are separate scripts
 Ingestion and querying run at different frequencies with different lifetimes:
@@ -56,7 +62,7 @@ design, not an afterthought bolted into the prompt string.
 
 1. **Install Ollama** and pull the models used in `.env`:
    ```bash
-   ollama pull llama3.2       # chat / generation model
+   ollama pull qwen2.5:3b-instruct  # chat / generation model
    ollama pull nomic-embed-text  # embedding model
    ```
    (Start the Ollama server: `ollama serve`.)
@@ -99,6 +105,7 @@ python -m src.api        # serves http://localhost:8000
 | POST   | `/ingest`      | Append a PDF (or clear + re-ingest) by filename    |
 | POST   | `/ingest/upload` | Upload one or more files (multipart) and index  |
 | DELETE | `/documents`   | Wipe the vector store                              |
+| GET    | `/course-index/status` | DuckDB/HNSW status, chunk + document counts |
 | GET    | `/health`      | Liveness check                                     |
 
 Interactive docs (`swagger`) are at `http://localhost:8000/docs`.
@@ -199,8 +206,8 @@ RAG fixes this by **conditioning the generation on retrieved evidence**:
    traceable to a retrieved passage, and we surface those passages as
    citations so a human can verify. If the material isn't there, the model
    can't invent it.
-3. **A relevance gate rejects weak evidence (Step 3)** — chunks whose L2
-   distance exceeds `MAX_DISTANCE` are discarded (Chroma's score is a distance:
+3. **A relevance gate rejects weak evidence (Step 3)** — chunks whose cosine
+   distance exceeds `MAX_DISTANCE` are discarded (DuckDB/HNSW score is a distance:
    *lower = more similar*), so the model is never asked to answer from
    barely-related text.
 4. **Temperature 0** reduces random generation variance, so outputs stay close
@@ -214,7 +221,7 @@ actually say, which is precisely where a syllabus bot's answers must live.
 Handling missing information is a **three-layer defense**, in order of
 application inside `generate.py`:
 
-1. **Retrieval distance gate (layer a).** Chunks whose L2 distance exceeds
+1. **Retrieval distance gate (layer a).** Chunks whose cosine distance exceeds
    `MAX_DISTANCE` are rejected *before* the LLM is ever called. If nothing
    survives, we return a fixed refusal ("I could not find the answer to this
    question in the course documents.") marked **not grounded** — no guess.
@@ -246,15 +253,16 @@ ask-the-syllabus-bot/
 ├── data/pdfs/                # your source syllabus/course PDFs go here
 ├── src/
 │   ├── config.py             # shared env-driven configuration
-│   ├── ingest.py             # PDF -> chunks -> embed -> Chroma
-│   ├── retrieve.py           # embed query, similarity search
+│   ├── ingest.py             # PDF -> chunks -> embed -> DuckDB + HNSW
+│   ├── retrieve.py           # embed query, DuckDB/HNSW similarity search
+│   ├── vectorstore.py        # DuckDB schema, HNSW index, chunk helpers
 │   ├── generate.py           # prompt + Ollama + relevance gate
 │   ├── citations.py          # chunk metadata -> readable citations
 │   └── cli.py                # interactive Q&A loop
 ├── eval/
 │   ├── test_questions.json   # fixed eval set
 │   └── run_eval.py           # runs eval, reports grounded vs hallucinated
-├── vectorstore/              # Chroma's persisted DB (gitignored)
+├── vectorstore/              # DuckDB course DB + HNSW index (gitignored)
 ├── .env                      # OLLAMA_HOST, model names, thresholds (gitignored)
 ├── .env.example
 ├── .gitignore

@@ -1,14 +1,13 @@
 """Step 2 of the RAG pipeline: retrieval.
 
 Embeds a user question with the same embedding model used at ingest time,
-then does a similarity search against the persisted Chroma store to pull
-back the most relevant chunks.
+then searches the shared DuckDB + HNSW course index for the most relevant
+chunks. The voice assistant reaches this same pipeline through /ask.
 
 Runs constantly (once per question), as opposed to ingest which runs once.
 """
 from __future__ import annotations
 
-from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
 
@@ -18,21 +17,13 @@ from src.config import (
     OLLAMA_EMBED_MODEL,
     OLLAMA_HOST,
     RETRIEVE_K,
-    VECTORSTORE_DIR,
 )
 from src.query import rewrite_query
+from src.vectorstore import store
 
 
-def get_vectorstore() -> Chroma:
-    """Reopen the persisted vector store without re-embedding everything."""
-    embeddings = OllamaEmbeddings(
-        base_url=OLLAMA_HOST,
-        model=OLLAMA_EMBED_MODEL,
-    )
-    return Chroma(
-        persist_directory=str(VECTORSTORE_DIR),
-        embedding_function=embeddings,
-    )
+def _embeddings() -> OllamaEmbeddings:
+    return OllamaEmbeddings(base_url=OLLAMA_HOST, model=OLLAMA_EMBED_MODEL)
 
 
 def _norm(text: str) -> str:
@@ -55,23 +46,23 @@ def _dedupe_top_k(pairs: list, k: int) -> list:
 
 
 def retrieve(query: str, k: int = RETRIEVE_K) -> list:
-    """Return the top-k distinct documents most semantically similar to the query.
+    """Return the top-k distinct documents most similar to the query.
 
-    Uses similarity_search_with_score: the score is Chroma's raw L2/euclidean
-    distance (space='l2'), where LOWER = more similar. The distance is used
-    by generate() as a relevance gate (see MAX_DISTANCE), so keep this method
-    and DO NOT switch to with_relevance_scores, which inverts the scale.
-
-    Searches with both the raw question and its cleaned-up rewrite, keeping
-    each chunk's best distance, so the rewrite can only add recall.
+    Scores are DuckDB cosine distances (lower = more similar). generate() uses
+    them as the relevance gate, so keep the raw distance rather than inverting
+    it into a similarity percentage.
     """
-    vectorstore = get_vectorstore()
+    embeddings = _embeddings()
     fetch_k = k * 3  # over-fetch so de-duplication still leaves k distinct chunks
-    pairs = vectorstore.similarity_search_with_score(query, k=fetch_k)
 
+    queries = [query]
     rewritten = rewrite_query(query)
     if rewritten and rewritten != query.strip():
-        pairs += vectorstore.similarity_search_with_score(rewritten, k=fetch_k)
+        queries.append(rewritten)
+
+    pairs: list[tuple[Document, float]] = []
+    for text in queries:
+        pairs.extend(store.search(embeddings.embed_query(text), fetch_k))
 
     return _dedupe_top_k(pairs, k)
 
@@ -86,7 +77,6 @@ def neighbor_chunks(hits: list, pages: int = NEIGHBOR_PAGES, top_n: int = NEIGHB
     if pages <= 0 or not hits:
         return []
 
-    vectorstore = get_vectorstore()
     have = {_norm(doc.page_content) for doc, _ in hits}
     extra = []
     for doc, _ in hits[:top_n]:
@@ -97,31 +87,18 @@ def neighbor_chunks(hits: list, pages: int = NEIGHBOR_PAGES, top_n: int = NEIGHB
         for p in range(page - pages, page + pages + 1):
             if p == page or p < 0:
                 continue
-            got = vectorstore.get(
-                where={"$and": [{"source": source}, {"page": p}]},
-                include=["documents", "metadatas"],
-            )
-            for text, meta in zip(got.get("documents") or [], got.get("metadatas") or []):
-                key = _norm(text)
+            for found in store.source_page_chunks(str(source), p):
+                key = _norm(found.page_content)
                 if key in have:
                     continue
                 have.add(key)
-                extra.append(Document(page_content=text, metadata=meta or {}))
+                extra.append(found)
     return extra
 
 
-def _has_missing_target(vectorstore: Chroma) -> bool:
-    """Chroma requires a collection_name when the store is empty/new."""
-    try:
-        return vectorstore._collection.count() == 0  # type: ignore[attr-defined]
-    except Exception:
-        return True
-
-
 def has_any_documents() -> bool:
-    """Quick check whether the vector store has been populated."""
+    """Quick check whether the shared course index has any chunks."""
     try:
-        vs = get_vectorstore()
-        return not _has_missing_target(vs)
+        return store.count() > 0
     except Exception:
         return False

@@ -20,21 +20,19 @@ import hashlib
 from pathlib import Path
 from typing import Any, Optional
 
-import chromadb
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.config import (
-    COLLECTION_NAME,
     MAX_UPLOAD_MB,
     PDF_DIR,
     SOURCE_DEFAULT,
-    VECTORSTORE_DIR,
 )
 from src.generate import UNANSWERABLE, generate
 from src.ingest import SUPPORTED_EXTS, clear_store, existing_hashes, file_sha1, ingest, list_sources
 from src.retrieve import has_any_documents, retrieve
+from src.vectorstore import store
 
 app = FastAPI(title="Ask-the-Syllabus Bot API", version="1.0.0")
 
@@ -93,19 +91,11 @@ class IngestResponse(BaseModel):
 # Helpers
 # --------------------------------------------------------------------------- #
 def _chunk_counts_by_source() -> dict[str, int]:
-    """Return {source_filename: number_of_chunks} from the Chroma collection."""
-    client = chromadb.PersistentClient(path=str(VECTORSTORE_DIR))
+    """Return {source_filename: number_of_chunks} from the DuckDB course index."""
     try:
-        col = client.get_collection(COLLECTION_NAME)
-        data = col.get(include=["metadatas"])
+        return store.chunk_counts_by_source()
     except Exception:
         return {}
-    counts: dict[str, int] = {}
-    for m in data.get("metadatas") or []:
-        src = (m or {}).get("source")
-        if src:
-            counts[src] = counts.get(src, 0) + 1
-    return counts
 
 
 def _pdf_page_count(filename: str) -> int:
@@ -389,6 +379,15 @@ def delete_documents() -> IngestResponse:
         documents=[],
         note="Vector store cleared. No documents indexed.",
     )
+
+
+@app.get("/course-index/status")
+def course_index_status() -> dict[str, Any]:
+    """Report the shared course store used by both chat and voice."""
+    try:
+        return store.status()
+    except Exception as exc:
+        return {"engine": "duckdb", "ready": False, "error": str(exc)}
 
 
 @app.get("/health")

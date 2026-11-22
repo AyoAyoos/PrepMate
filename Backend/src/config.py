@@ -47,30 +47,26 @@ QUERY_REWRITE = _get("QUERY_REWRITE", "true").strip().lower() in {"1", "true", "
 NEIGHBOR_PAGES = _get_int("NEIGHBOR_PAGES", 1)
 NEIGHBOR_TOP_N = _get_int("NEIGHBOR_TOP_N", 2)
 
-# Relevance gate on Chroma's L2/HNSW distance (space='l2'): LOWER = more
-# similar. Empirically calibrated on this corpus: answerable top-hits are
-# ~0.21-0.50, unanswerable top-hits are ~0.80-1.19. 0.70 sits in the gap with
-# ~0.20 margin on each side. Retrieved chunks whose distance is WORSE
-# (larger) than this are discarded *before* the LLM is called.
-MAX_DISTANCE = _get_float("MAX_DISTANCE", 0.70)
+# Relevance gate on DuckDB's cosine distance: LOWER = more similar.
+# Retrieved chunks whose distance is WORSE (larger) than this are discarded
+# *before* the LLM is called. Calibrate against the DuckDB/HNSW index, not the
+# old Chroma L2 scale.
+# On this corpus answerable top-hits are ~0.17-0.34, unanswerable ~0.48-0.59.
+MAX_DISTANCE = _get_float("MAX_DISTANCE", 0.40)
 
+# One DuckDB + HNSW course database shared by chat and voice (voice uses /ask).
+COURSE_DB_PATH = PROJECT_ROOT / _get("COURSE_DB_PATH", "vectorstore/course.duckdb")
+EMBEDDING_DIM = _get_int("EMBEDDING_DIM", 768)
+
+# Legacy path kept only so older local .env files still parse.
 VECTORSTORE_DIR = PROJECT_ROOT / _get("VECTORSTORE_DIR", "vectorstore/chroma")
 PDF_DIR = PROJECT_ROOT / _get("PDF_DIR", "data/pdfs")
 
-# Max size for a single uploaded document (in MB). Larger files are rejected
-# with a clear error to keep the local ingestion/embedding pipeline responsive.
+
 MAX_UPLOAD_MB = _get_int("MAX_UPLOAD_MB", 50)
 
 # Default source for ingestion when --source is not given (a folder or file).
 SOURCE_DEFAULT = PDF_DIR
 
-# Chroma collection name. Keep in sync with retrieve.py (which uses LangChain's
-# default "langchain" collection name implicitly).
-COLLECTION_NAME = "langchain"
-
-# Tuned for slide-based PDFs where each page is 277-400 chars and
-# semantically atomic. chunk_size=1000 keeps one-slide-per-chunk even for the
-# handful of dense slides that run up to ~940 chars; overlap is only a safety
-# margin should any slide ever exceed 1000.
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 100

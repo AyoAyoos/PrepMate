@@ -87,7 +87,7 @@ def generate(retrieved: list, question: str) -> Answer:
 
     Layer (a): chunks beyond MAX_DISTANCE are discarded BEFORE the LLM runs.
     """
-    # Layer (a): retrieval distance gate. L2 distance, lower = more similar,
+    # Layer (a): retrieval distance gate. Cosine distance, lower = more similar,
     # so keep only chunks at or under MAX_DISTANCE.
     kept = [(doc, score) for doc, score in retrieved if score is not None and score <= MAX_DISTANCE]
 

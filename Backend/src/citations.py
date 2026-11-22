@@ -1,6 +1,6 @@
 """Citation formatting.
 
-Retrieved chunks carry metadata (source filename, page number) and an L2
+Retrieved chunks carry metadata (source filename, page number) and a cosine
 distance score (lower = more relevant). This module turns the raw
 (document, score) pairs into a readable, human-friendly list of citations so
 that grounding is visible to the user.
@@ -15,7 +15,7 @@ def _page(metadata: dict[str, Any]) -> int | None:
     for key in ("page", "page_number"):
         if key in metadata:
             try:
-                return int(metadata[key]) + 1  # Chroma stores page as 0-indexed when available
+                return int(metadata[key]) + 1  # loaders store page as 0-indexed when available
             except (TypeError, ValueError):
                 return None
     return None

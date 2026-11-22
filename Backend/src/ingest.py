@@ -2,7 +2,8 @@
 
 Loads supported files (PDF, DOCX, XLSX, TXT, MD, CSV, ...) — a single file or
 a whole folder — splits them into overlapping text chunks, embeds the chunks
-with OllamaEmbeddings, and persists them in a local Chroma vector store.
+with OllamaEmbeddings, and persists them in the shared DuckDB + HNSW course
+index used by both chat and voice.
 
 Features:
   * --source <file-or-folder>  ingest one file or all supported files in a
@@ -10,8 +11,8 @@ Features:
   * default: APPEND            new files are added to whatever is already in
                                the store, so a corpus can grow across
                                sessions (Unit 1 + 2 today, Unit 3 tomorrow).
-  * --clear                    wipe the existing collection before ingesting
-                               the new source (for switching corpora).
+  * --clear                    wipe the existing index before ingesting the
+                               new source (for switching corpora).
   * --list                     print which source files are currently in the
                                store, without ingesting anything.
 
@@ -32,21 +33,18 @@ import hashlib
 import sys
 from pathlib import Path
 
-import chromadb
 from langchain_core.documents import Document
-from langchain_community.vectorstores import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
-    COLLECTION_NAME,
     OLLAMA_EMBED_MODEL,
     OLLAMA_HOST,
     SOURCE_DEFAULT,
-    VECTORSTORE_DIR,
 )
+from src.vectorstore import store
 
 # File extensions the ingestion pipeline can parse into text for embedding.
 # Kept intentionally lightweight (no fragile `unstructured` dependency):
@@ -100,37 +98,24 @@ def resolve_source_files(source: Path | str) -> list[Path]:
 resolve_pdf_files = resolve_source_files
 
 
-def _get_client() -> chromadb.ClientAPI:
-    return chromadb.PersistentClient(path=str(VECTORSTORE_DIR))
-
-
 def existing_hashes() -> set[str]:
     """Return the content hashes (file_sha1) of every file already in the store.
 
     Content alone identifies a duplicate: the same file re-uploaded under a new
     name (e.g. "notes_1.pdf") must not be indexed twice.
     """
-    client = _get_client()
     try:
-        col = client.get_collection(COLLECTION_NAME)
-        data = col.get(include=["metadatas"])
+        return store.existing_hashes()
     except Exception:
         return set()
-    metas = data.get("metadatas") or []
-    return {m["file_sha1"] for m in metas if m and m.get("file_sha1")}
 
 
 def list_sources() -> list[str]:
     """Return the distinct source filenames currently in the store."""
-    client = _get_client()
     try:
-        col = client.get_or_create_collection(COLLECTION_NAME)
-        data = col.get(include=["metadatas"])
+        return store.list_sources()
     except Exception:
         return []
-    metas = data.get("metadatas") or []
-    sources = sorted({m.get("source") for m in metas if m and m.get("source")})
-    return sources
 
 
 def file_sha1(path: Path) -> str:
@@ -222,28 +207,21 @@ def split_documents(documents: list) -> tuple:
 
 
 def _embed_chunks(chunks: list) -> None:
-    """Embed and append chunks into the persistent Chroma store (default: append)."""
+    """Embed and append chunks to the shared DuckDB + HNSW course index."""
+    if not chunks:
+        return
     embeddings = OllamaEmbeddings(
         base_url=OLLAMA_HOST,
         model=OLLAMA_EMBED_MODEL,
     )
-    vectorstore = Chroma(
-        collection_name=COLLECTION_NAME,
-        persist_directory=str(VECTORSTORE_DIR),
-        embedding_function=embeddings,
-    )
-    if chunks:
-        vectorstore.add_documents(chunks)
+    vectors = embeddings.embed_documents([chunk.page_content for chunk in chunks])
+    store.add_chunks(chunks, vectors, model=OLLAMA_EMBED_MODEL)
 
 
 def clear_store() -> None:
-    """Wipe the existing Chroma collection entirely."""
-    client = _get_client()
-    try:
-        client.delete_collection(COLLECTION_NAME)
-        print(f"Cleared existing collection '{COLLECTION_NAME}'.")
-    except Exception:
-        print(f"No existing collection '{COLLECTION_NAME}' to clear.")
+    """Wipe the DuckDB course index entirely."""
+    store.clear()
+    print(f"Cleared course index at {store.path}.")
 
 
 def ingest(source: Path | str, clear: bool = False) -> int:
@@ -282,7 +260,7 @@ def ingest(source: Path | str, clear: bool = False) -> int:
 
     _embed_chunks(chunks)
     print(f"Added {pages} pages / {len(chunks)} chunks from {len(pending)} file(s) "
-          f"to '{COLLECTION_NAME}' in {VECTORSTORE_DIR}")
+          f"to DuckDB + HNSW at {store.path}")
 
     for f in dupes:
         print(f"  Skipped: {f.name} (already in store, content-hash match)")
@@ -319,7 +297,7 @@ def _cli() -> None:
 
     parser = argparse.ArgumentParser(
         prog="python -m src.ingest",
-        description="Ingest course PDFs into the Chroma vector store.",
+        description="Ingest course documents into the DuckDB + HNSW index.",
     )
     parser.add_argument(
         "--source",

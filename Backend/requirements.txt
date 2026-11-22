@@ -1,7 +1,7 @@
 langchain
 langchain-community
 langchain-ollama
-chromadb
+duckdb==1.5.6
 pypdf
 python-dotenv
 fastapi
