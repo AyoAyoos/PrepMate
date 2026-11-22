@@ -1,12 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
-import { BookOpen, Moon, Send, Sun, Upload } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { BookOpen, Mic, Moon, Send, Sun, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChatMessage, type ChatItem } from "@/components/syllabus/ChatMessage";
 import { DocumentList } from "@/components/syllabus/DocumentList";
 import { IngestPanel } from "@/components/syllabus/IngestPanel";
 import { ThinkingIndicator } from "@/components/syllabus/ThinkingIndicator";
+import { VoicePanel } from "@/components/voice/VoicePanel";
 import { askQuestion, getStoredDocuments, type StoredDocument } from "@/lib/api";
+import { useVoiceCall, type VoiceTranscript } from "@/lib/useVoiceCall";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -41,8 +43,32 @@ function Index() {
   const [docs, setDocs] = useState<StoredDocument[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [ingestOpen, setIngestOpen] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
   const [dark, setDark] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+
+  const handleVoiceTranscript = useCallback((message: VoiceTranscript) => {
+    const id = `voice-${message.id}`;
+    const next: ChatItem =
+      message.role === "user"
+        ? { id, role: "voice-user", text: message.text }
+        : { id, role: "voice-bot", text: message.text };
+
+    setItems((previous) => {
+      const index = previous.findIndex((item) => item.id === id);
+      if (index >= 0) {
+        const updated = [...previous];
+        updated[index] = next;
+        return updated;
+      }
+      return [
+        ...previous.map((item) => (item.role === "bot" ? { ...item, fresh: false } : item)),
+        next,
+      ];
+    });
+  }, []);
+
+  const voice = useVoiceCall(handleVoiceTranscript);
 
   useEffect(() => {
     getStoredDocuments().then((d) => {
@@ -76,6 +102,28 @@ function Index() {
     setBusy(false);
   }
 
+  async function toggleVoice() {
+    if (voiceActive) {
+      voice.stop();
+      setVoiceActive(false);
+      setItems((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "voice-status", text: "Voice call ended" },
+      ]);
+      return;
+    }
+    setVoiceActive(true);
+    setItems((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        role: "voice-status",
+        text: "Voice call starting — speak after “Listening…”",
+      },
+    ]);
+    await voice.start();
+  }
+
   return (
     <div className="grid-paper min-h-screen bg-background text-foreground">
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col">
@@ -88,10 +136,14 @@ function Index() {
               Ask-the-Syllabus Bot
             </h1>
             <p className="truncate text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Grounded RAG over course PDFs
+              Grounded RAG over course PDFs — text and voice
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <Button variant={voiceActive ? "brutal" : "brutalOutline"} onClick={toggleVoice}>
+              <Mic className="size-4" />
+              <span className="hidden sm:inline">{voiceActive ? "Voice on" : "Voice"}</span>
+            </Button>
             <Button variant="brutalOutline" size="icon" onClick={() => setDark((v) => !v)}>
               {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
             </Button>
@@ -104,6 +156,14 @@ function Index() {
 
         <div className="flex flex-1 flex-col-reverse gap-0 lg:flex-row">
           <main className="flex min-h-0 flex-1 flex-col">
+            <VoicePanel
+              active={voiceActive}
+              status={voice.status}
+              statusLabel={voice.statusLabel}
+              remoteStream={voice.remoteStream}
+              onToggle={toggleVoice}
+            />
+
             <div className="flex-1 space-y-4 overflow-y-auto p-4">
               {items.length === 0 && (
                 <div className="border-2 border-foreground bg-card p-5 shadow-brutal">
@@ -111,8 +171,8 @@ function Index() {
                     Ask about your course material
                   </h2>
                   <p className="mt-2 text-sm font-medium text-muted-foreground">
-                    Answers are generated only from indexed slide chunks. When the retrieved
-                    context is weak, the bot refuses instead of guessing.
+                    Type a question or turn on Voice — both use the same DuckDB + HNSW course index.
+                    When the retrieved context is weak, the bot refuses instead of guessing.
                   </p>
                   <div className="mt-4 flex flex-wrap gap-2">
                     {SUGGESTIONS.map((s) => (
@@ -145,6 +205,16 @@ function Index() {
                   placeholder="Ask a question about the syllabus…"
                   className="h-11 flex-1 border-2 border-foreground bg-background px-3 text-sm font-semibold outline-none placeholder:text-muted-foreground focus:shadow-brutal-sm"
                 />
+                <Button
+                  variant="brutalOutline"
+                  size="icon"
+                  className="h-11"
+                  title="Ask by voice in this chat"
+                  aria-label="Ask by voice in this chat"
+                  onClick={toggleVoice}
+                >
+                  <Mic className="size-4" />
+                </Button>
                 <Button
                   variant="brutal"
                   className="h-11"
