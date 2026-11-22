@@ -1,5 +1,16 @@
 # Secrets / local config
 .env
+Frontend/.env
+.prepmate-pids.json
+
+# Local runtime state for the bundled voice assistant
+logs/
+VoiceAssistant/.cache/
+VoiceAssistant/data/*.duckdb
+VoiceAssistant/data/.voice-db-clean
+VoiceAssistant/.voice-*
+VoiceAssistant/voice-*.log
+VoiceAssistant/screenshots/
 
 # Vector database + build artifacts
 vectorstore/
