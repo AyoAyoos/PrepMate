@@ -15,7 +15,7 @@ import re
 import socket
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 import pytz
@@ -102,10 +102,29 @@ def _is_overview_question(question: str) -> bool:
     return bool(_OVERVIEW_QUESTION_RE.search(question))
 
 
-async def syllabus_search(params: FunctionCallParams) -> None:
+def normalize_answer_length(value: Any) -> str:
+    """Map a spoken/UI answer-length choice to 'short', 'long', or '' if unknown."""
+    text = str(value or "").strip().lower()
+    if text in {"long", "detailed", "deep", "full", "verbose"}:
+        return "long"
+    if text in {"short", "brief", "concise", "small"}:
+        return "short"
+    return ""
+
+
+async def syllabus_search(
+    params: FunctionCallParams, answer_length: str = ""
+) -> None:
     """Answer spoken course questions from PrepMate's DuckDB + HNSW-backed /ask endpoint."""
 
     question = str(params.arguments.get("question") or "").strip()
+    # The UI choice is passed in by the pipeline; a spoken "make it long" override
+    # in the tool arguments wins. Backward default stays short.
+    mode = (
+        normalize_answer_length(answer_length)
+        or normalize_answer_length(params.arguments.get("answer_length"))
+        or "short"
+    )
 
     async def handler() -> None:
         if not question:
@@ -119,7 +138,9 @@ async def syllabus_search(params: FunctionCallParams) -> None:
         # Retrieval + generation (and the DB overview) can exceed the short web timeout.
         async with httpx.AsyncClient(timeout=30.0) as client:
             if _is_overview_question(question):
-                overview = await client.get(f"{base}/course/overview")
+                overview = await client.get(
+                    f"{base}/course/overview", params={"detail": mode}
+                )
                 if overview.status_code == 200:
                     payload = overview.json()
                     answer = " ".join(str(payload.get("answer") or "").split())[:_MAX_RESULT_CHARS]
@@ -138,6 +159,7 @@ async def syllabus_search(params: FunctionCallParams) -> None:
                                 "Ask about a specific topic for a cited answer."
                             ),
                             "source": "prepmate-course-overview",
+                            "answer_length": mode,
                         },
                         properties=FunctionCallResultProperties(run_llm=True),
                     )
@@ -145,7 +167,7 @@ async def syllabus_search(params: FunctionCallParams) -> None:
 
             response = await client.post(
                 f"{base}/ask",
-                json={"question": question[:1000]},
+                json={"question": question[:1000], "answer_length": mode},
                 headers={"Content-Type": "application/json"},
             )
         if response.status_code != 200:
@@ -171,6 +193,7 @@ async def syllabus_search(params: FunctionCallParams) -> None:
             "sources": sources,
             "note": note,
             "source": "prepmate-syllabus-rag",
+            "answer_length": mode,
         }
         if not grounded:
             result["hint"] = (
@@ -186,6 +209,17 @@ async def syllabus_search(params: FunctionCallParams) -> None:
         )
 
     await _safe_call(params, handler)
+
+
+def create_syllabus_search_handler(
+    answer_length_getter: Callable[[], str],
+) -> Callable[[FunctionCallParams], Any]:
+    """Bind a call's selected answer length into the syllabus_search handler."""
+
+    async def handler(params: FunctionCallParams) -> None:
+        await syllabus_search(params, answer_length_getter())
+
+    return handler
 
 
 # ---------------------------------------------------------------- web search
@@ -1429,7 +1463,9 @@ def create_end_conversation_handler(worker_getter):
 # ------------------------------------------------------------- schema factory
 
 
-def build_tool_schemas(worker_getter) -> list[FunctionSchema]:
+def build_tool_schemas(
+    worker_getter, answer_length_getter: Callable[[], str] | None = None
+) -> list[FunctionSchema]:
     """Build one fresh set of tools (with handlers) for a single call."""
     return [
         FunctionSchema(
@@ -1447,10 +1483,23 @@ def build_tool_schemas(worker_getter) -> list[FunctionSchema]:
                 "question": {
                     "type": "string",
                     "description": "The course-related question in the user's own words.",
-                }
+                },
+                "answer_length": {
+                    "type": "string",
+                    "enum": ["short", "long"],
+                    "description": (
+                        "How detailed the course answer should be. Defaults to the length "
+                        "chosen in the PrepMate voice panel; use 'long' when the user asks "
+                        "for depth, detail, or a full explanation, 'short' for a quick fact."
+                    ),
+                },
             },
             required=["question"],
-            handler=syllabus_search,
+            handler=(
+                create_syllabus_search_handler(answer_length_getter)
+                if answer_length_getter
+                else syllabus_search
+            ),
         ),
         FunctionSchema(
             name="web_search",

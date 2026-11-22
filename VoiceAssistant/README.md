@@ -151,12 +151,22 @@ Gemini Live performs speech recognition (STT), conversation (LLM), and speech sy
 
 In local/offline mode the assistant speaks **"I'm offline, using local models."** once at the start of every call, then behaves normally. Local STT is faster-whisper (`LOCAL_STT_MODEL`, default `small.en`), the chat model is an Ollama model (`LOCAL_LLM_MODEL`, default `qwen2.5:3b-instruct`) reached through its OpenAI-compatible `/v1` endpoint, and TTS is Piper (`LOCAL_TTS_VOICE`, default `en_US-lessac-medium`). Model downloads are described in [SETUP.md](SETUP.md). Offline mode cannot use Gemini's server-side barge-in; turn boundaries come from local Silero VAD and the smart-turn analyzer.
 
+## Answer depth and grounding
+
+The PrepMate UI exposes a **Short / Long** selector next to the Voice button. It is passed in the WebRTC offer's `call_context_vars.answer_length` and drives two prompts:
+
+- the voice model's system instruction (one or two spoken sentences for Short, six to ten for Long), and
+- PrepMate `/ask`'s generation prompt (2–4 sentences for Short, 6–10 for Long, with more retrieved chunks for depth).
+
+Long mode raises the local voice model's token cap from 200 to 900. Course facts remain **course-only**: `/ask` runs at temperature `0.0` and the voice prompt forbids filling gaps from its own knowledge. The speaking model's phrasing temperature is `VOICE_LLM_TEMPERATURE` (default `0.7`). Outside information is used only for non-course questions, or for course questions when the user explicitly asks for outside context (then it must be labelled as such).
+
 ## Tools
 
 One set of function schemas with attached handlers is built per call and registered on both Gemini Live and the local LLM, so the assistant has identical capabilities online or offline:
 
 | Tool | What it does |
 | --- | --- |
+| `syllabus_search` | Calls PrepMate `/ask` (or `/course/overview` for broad questions) using the shared DuckDB + HNSW index. Passes the selected `short`/`long` answer length. |
 | `web_search` | Live web search for current/changing facts (Tavily, with optional Brave fallback). |
 | `fetch_page` | Reads the text of a specific URL when a snippet is not enough. |
 | `memory_search` | Searches saved long-term facts via HNSW + keyword fallback. |
@@ -263,7 +273,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\voice-assistant\scrip
 | `BRAVE_API_KEY` | empty | Optional Brave fallback when a Tavily call fails |
 | `LOCAL_STT_MODEL` | `small.en` | faster-whisper model for offline STT |
 | `LOCAL_LLM_MODEL` | `qwen2.5:3b-instruct` | Ollama chat model for offline LLM |
-| `LOCAL_LLM_TEMPERATURE` | `0.7` | Sampling temperature for the local fallback LLM (0–2) |
+| `LOCAL_LLM_TEMPERATURE` | `0.7` | Legacy sampling temperature for the local fallback LLM (0–2) |
+| `VOICE_LLM_TEMPERATURE` | `0.7` | Sampling temperature for the speaking model (local or Gemini). Course facts stay at `/ask` temperature `0.0`. |
 | `LOCAL_TTS_VOICE` | `en_US-lessac-medium` | Piper voice for offline TTS |
 | `PIPER_MODELS_DIR` | `~/.cache/piper` | Directory holding downloaded Piper voices |
 

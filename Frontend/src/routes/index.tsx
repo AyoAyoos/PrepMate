@@ -6,8 +6,9 @@ import { ChatMessage, type ChatItem } from "@/components/syllabus/ChatMessage";
 import { DocumentList } from "@/components/syllabus/DocumentList";
 import { IngestPanel } from "@/components/syllabus/IngestPanel";
 import { ThinkingIndicator } from "@/components/syllabus/ThinkingIndicator";
-import { VoicePanel } from "@/components/voice/VoicePanel";
+import { AnswerLengthToggle, VoicePanel } from "@/components/voice/VoicePanel";
 import { askQuestion, getStoredDocuments, type StoredDocument } from "@/lib/api";
+import type { VoiceAnswerLength } from "@/lib/voice";
 import { useVoiceCall, type VoiceTranscript } from "@/lib/useVoiceCall";
 
 export const Route = createFileRoute("/")({
@@ -44,6 +45,7 @@ function Index() {
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [ingestOpen, setIngestOpen] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
+  const [answerLength, setAnswerLength] = useState<VoiceAnswerLength>("short");
   const [dark, setDark] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -121,7 +123,7 @@ function Index() {
         text: "Voice call starting — speak after “Listening…”",
       },
     ]);
-    await voice.start();
+    await voice.start(answerLength);
   }
 
   return (
@@ -140,6 +142,11 @@ function Index() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <AnswerLengthToggle
+              value={answerLength}
+              onChange={setAnswerLength}
+              disabled={voiceActive}
+            />
             <Button variant={voiceActive ? "brutal" : "brutalOutline"} onClick={toggleVoice}>
               <Mic className="size-4" />
               <span className="hidden sm:inline">{voiceActive ? "Voice on" : "Voice"}</span>
@@ -161,6 +168,8 @@ function Index() {
               status={voice.status}
               statusLabel={voice.statusLabel}
               remoteStream={voice.remoteStream}
+              answerLength={answerLength}
+              onAnswerLengthChange={setAnswerLength}
               onToggle={toggleVoice}
             />
 

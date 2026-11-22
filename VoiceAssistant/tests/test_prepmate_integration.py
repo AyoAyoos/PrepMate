@@ -36,12 +36,14 @@ class _FakeParams:
 class _AskHandler(BaseHTTPRequestHandler):
     received: dict[str, Any] | None = None
     overview_requests = 0
+    overview_path = ""
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler name
-        if self.path != "/course/overview":
+        if not self.path.startswith("/course/overview"):
             self.send_error(404)
             return
         _AskHandler.overview_requests += 1
+        _AskHandler.overview_path = self.path
         body = json.dumps(
             {
                 "answer": "I have one course document indexed: NLP Unit 1.pdf.",
@@ -112,7 +114,21 @@ class SyllabusSearchIntegrationTest(unittest.TestCase):
         self.assertTrue(params.result["grounded"])
         self.assertIn("retrieval augmented", params.result["answer"].lower())
         self.assertEqual(params.result["sources"], ["NLP Unit 1.pdf, page 7"])
-        self.assertEqual(_AskHandler.received, {"question": "What is RAG?"})
+        self.assertEqual(
+            _AskHandler.received, {"question": "What is RAG?", "answer_length": "short"}
+        )
+
+    def test_long_answer_length_is_sent_to_backend(self) -> None:
+        _AskHandler.received = None
+        params = _FakeParams({"question": "Explain semantic analysis", "answer_length": "long"})
+        asyncio.run(syllabus_search(params, "long"))
+
+        assert params.result is not None
+        self.assertEqual(params.result["answer_length"], "long")
+        self.assertEqual(
+            _AskHandler.received,
+            {"question": "Explain semantic analysis", "answer_length": "long"},
+        )
 
     def test_broad_course_question_uses_db_backed_overview(self) -> None:
         _AskHandler.received = None
@@ -126,6 +142,7 @@ class SyllabusSearchIntegrationTest(unittest.TestCase):
         self.assertTrue(params.result["grounded"])
         self.assertEqual(params.result["sources"], ["NLP Unit 1.pdf"])
         self.assertEqual(_AskHandler.overview_requests, before + 1)
+        self.assertIn("detail=short", _AskHandler.overview_path)
         self.assertIsNone(_AskHandler.received)  # /ask was not called
 
     def test_overview_question_detection(self) -> None:

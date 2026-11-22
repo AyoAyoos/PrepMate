@@ -79,7 +79,12 @@ logger.add(
     diagnose=True,
 )
 
-from pipeline import close_memory_client, warm_network, warm_smart_turn  # noqa: E402
+from pipeline import (  # noqa: E402
+    close_memory_client,
+    voice_temperature,
+    warm_network,
+    warm_smart_turn,
+)
 from routes.webrtc_signaling import router as signaling_router  # noqa: E402
 from storage.duckdb_store import store  # noqa: E402
 from storage.embeddings import embedder  # noqa: E402
@@ -225,6 +230,10 @@ async def integration_status():
         "syllabus_search": True,
         "reachable": False,
         "documents": None,
+        "answer_policy": {
+            "course_only": True,
+            "voice_temperature": voice_temperature(),
+        },
         "course_index": {
             "engine": "duckdb",
             "reachable": False,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { voiceAssistantUrl, voiceAssistantWsUrl } from "@/lib/voice";
+import { voiceAssistantUrl, voiceAssistantWsUrl, type VoiceAnswerLength } from "@/lib/voice";
 
 export type VoiceCallStatus = "idle" | "connecting" | "live" | "error";
 export type VoiceTranscriptRole = "user" | "assistant";
@@ -129,130 +129,133 @@ export function useVoiceCall(onTranscript: (message: VoiceTranscript) => void) {
     }
   }, []);
 
-  const start = useCallback(async () => {
-    if (
-      activeRef.current ||
-      wsRef.current ||
-      pcRef.current ||
-      status === "connecting" ||
-      status === "live"
-    ) {
-      return;
-    }
-
-    updateStatus("connecting", "Connecting…");
-    try {
-      const localStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      if (!mountedRef.current) {
-        localStream.getTracks().forEach((track) => track.stop());
+  const start = useCallback(
+    async (answerLength: VoiceAnswerLength = "short") => {
+      if (
+        activeRef.current ||
+        wsRef.current ||
+        pcRef.current ||
+        status === "connecting" ||
+        status === "live"
+      ) {
         return;
       }
-      localStreamRef.current = localStream;
 
-      const pcId = crypto.randomUUID();
-      pcIdRef.current = pcId;
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-      });
-      pcRef.current = pc;
-      localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
-
-      pc.ontrack = (event) => {
-        if (mountedRef.current && event.streams[0]) {
-          setRemoteStream(event.streams[0]);
+      updateStatus("connecting", "Connecting…");
+      try {
+        const localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        if (!mountedRef.current) {
+          localStream.getTracks().forEach((track) => track.stop());
+          return;
         }
-      };
-      pc.onicecandidate = (event) => {
-        const ws = wsRef.current;
-        const currentPcId = pcIdRef.current;
-        if (!ws || ws.readyState !== WebSocket.OPEN || !currentPcId) return;
+        localStreamRef.current = localStream;
+
+        const pcId = crypto.randomUUID();
+        pcIdRef.current = pcId;
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        });
+        pcRef.current = pc;
+        localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+
+        pc.ontrack = (event) => {
+          if (mountedRef.current && event.streams[0]) {
+            setRemoteStream(event.streams[0]);
+          }
+        };
+        pc.onicecandidate = (event) => {
+          const ws = wsRef.current;
+          const currentPcId = pcIdRef.current;
+          if (!ws || ws.readyState !== WebSocket.OPEN || !currentPcId) return;
+          ws.send(
+            JSON.stringify({
+              type: "ice-candidate",
+              payload: {
+                pc_id: currentPcId,
+                candidate: event.candidate ? event.candidate.toJSON() : null,
+              },
+            }),
+          );
+        };
+
+        const ws = new WebSocket(voiceAssistantWsUrl("/ws/signaling/1"));
+        wsRef.current = ws;
+        ws.onmessage = async (event) => {
+          let message: IncomingMessage;
+          try {
+            message = JSON.parse(String(event.data)) as IncomingMessage;
+          } catch {
+            return;
+          }
+          const payload = asRecord(message.payload);
+
+          if (message.type === "answer") {
+            const sdp = payload?.sdp;
+            if (typeof sdp === "string") {
+              await pc.setRemoteDescription({ type: "answer", sdp });
+              activeRef.current = true;
+              updateStatus("live", "Listening…");
+            }
+          } else if (message.type === "ice-candidate") {
+            const candidate = payload?.candidate;
+            if (candidate && typeof candidate === "object") {
+              try {
+                await pc.addIceCandidate(candidate as RTCIceCandidateInit);
+              } catch (error) {
+                void reportError(error, "addIceCandidate");
+              }
+            }
+          } else if (message.type === "transcript") {
+            const role: VoiceTranscriptRole = payload?.role === "user" ? "user" : "assistant";
+            emitTranscript(role, typeof payload?.text === "string" ? payload.text : "", true);
+          } else if (message.type === "state") {
+            const mapped = mapServerState(typeof payload?.state === "string" ? payload.state : "");
+            updateStatus(mapped.status, mapped.label);
+          } else if (message.type === "error") {
+            const text =
+              typeof payload?.message === "string" ? payload.message : "Voice connection error";
+            emitTranscript("assistant", text, true);
+            updateStatus("error", "Error");
+          } else if (message.type === "call-ended") {
+            cleanup("idle", "Call ended");
+          }
+        };
+        ws.onclose = () => {
+          if (activeRef.current) cleanup("idle", "Call ended");
+        };
+
+        await new Promise<void>((resolve, reject) => {
+          ws.onopen = () => resolve();
+          ws.onerror = () => reject(new Error("Voice signaling connection failed"));
+        });
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
         ws.send(
           JSON.stringify({
-            type: "ice-candidate",
+            type: "offer",
             payload: {
-              pc_id: currentPcId,
-              candidate: event.candidate ? event.candidate.toJSON() : null,
+              pc_id: pcId,
+              sdp: offer.sdp,
+              type: offer.type,
+              call_context_vars: { answer_length: answerLength },
             },
           }),
         );
-      };
-
-      const ws = new WebSocket(voiceAssistantWsUrl("/ws/signaling/1"));
-      wsRef.current = ws;
-      ws.onmessage = async (event) => {
-        let message: IncomingMessage;
-        try {
-          message = JSON.parse(String(event.data)) as IncomingMessage;
-        } catch {
-          return;
-        }
-        const payload = asRecord(message.payload);
-
-        if (message.type === "answer") {
-          const sdp = payload?.sdp;
-          if (typeof sdp === "string") {
-            await pc.setRemoteDescription({ type: "answer", sdp });
-            activeRef.current = true;
-            updateStatus("live", "Listening…");
-          }
-        } else if (message.type === "ice-candidate") {
-          const candidate = payload?.candidate;
-          if (candidate && typeof candidate === "object") {
-            try {
-              await pc.addIceCandidate(candidate as RTCIceCandidateInit);
-            } catch (error) {
-              void reportError(error, "addIceCandidate");
-            }
-          }
-        } else if (message.type === "transcript") {
-          const role: VoiceTranscriptRole = payload?.role === "user" ? "user" : "assistant";
-          emitTranscript(role, typeof payload?.text === "string" ? payload.text : "", true);
-        } else if (message.type === "state") {
-          const mapped = mapServerState(typeof payload?.state === "string" ? payload.state : "");
-          updateStatus(mapped.status, mapped.label);
-        } else if (message.type === "error") {
-          const text =
-            typeof payload?.message === "string" ? payload.message : "Voice connection error";
-          emitTranscript("assistant", text, true);
-          updateStatus("error", "Error");
-        } else if (message.type === "call-ended") {
-          cleanup("idle", "Call ended");
-        }
-      };
-      ws.onclose = () => {
-        if (activeRef.current) cleanup("idle", "Call ended");
-      };
-
-      await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => resolve();
-        ws.onerror = () => reject(new Error("Voice signaling connection failed"));
-      });
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      ws.send(
-        JSON.stringify({
-          type: "offer",
-          payload: {
-            pc_id: pcId,
-            sdp: offer.sdp,
-            type: offer.type,
-            call_context_vars: {},
-          },
-        }),
-      );
-    } catch (error) {
-      void reportError(error, "start");
-      emitTranscript("assistant", error instanceof Error ? error.message : String(error), true);
-      cleanup("error", "Error");
-    }
-  }, [cleanup, emitTranscript, reportError, status, updateStatus]);
+      } catch (error) {
+        void reportError(error, "start");
+        emitTranscript("assistant", error instanceof Error ? error.message : String(error), true);
+        cleanup("error", "Error");
+      }
+    },
+    [cleanup, emitTranscript, reportError, status, updateStatus],
+  );
 
   const stop = useCallback(() => {
     cleanup("idle", "Call ended");

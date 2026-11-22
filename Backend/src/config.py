@@ -37,6 +37,8 @@ OLLAMA_HOST = _get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_EMBED_MODEL = _get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_LLM_MODEL = _get("OLLAMA_LLM_MODEL", "llama3.2")
 RETRIEVE_K = _get_int("RETRIEVE_K", 5)
+# "Long" voice answers pull in more source chunks before the relevance gate.
+RETRIEVE_K_LONG = max(RETRIEVE_K, _get_int("RETRIEVE_K_LONG", 9))
 
 # Rewrite fragments/typos into a clean question before retrieval.
 QUERY_REWRITE = _get("QUERY_REWRITE", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -46,6 +48,7 @@ QUERY_REWRITE = _get("QUERY_REWRITE", "true").strip().lower() in {"1", "true", "
 # each side (context only: they are not gated by distance or cited).
 NEIGHBOR_PAGES = _get_int("NEIGHBOR_PAGES", 1)
 NEIGHBOR_TOP_N = _get_int("NEIGHBOR_TOP_N", 2)
+NEIGHBOR_TOP_N_LONG = max(NEIGHBOR_TOP_N, _get_int("NEIGHBOR_TOP_N_LONG", 4))
 
 # Relevance gate on DuckDB's cosine distance: LOWER = more similar.
 # Retrieved chunks whose distance is WORSE (larger) than this are discarded

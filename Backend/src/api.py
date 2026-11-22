@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +29,8 @@ from pydantic import BaseModel, Field
 from src.config import (
     MAX_UPLOAD_MB,
     PDF_DIR,
+    RETRIEVE_K,
+    RETRIEVE_K_LONG,
     SOURCE_DEFAULT,
 )
 from src.generate import UNANSWERABLE, generate
@@ -59,6 +61,7 @@ class Citation(BaseModel):
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=1)
+    answer_length: Literal["short", "long"] = "short"
 
 
 class AskResponse(BaseModel):
@@ -137,7 +140,7 @@ def _overview_topics(source: str) -> list[str]:
     return topics[:8]
 
 
-def _course_overview() -> dict[str, Any]:
+def _course_overview(detail: str = "long") -> dict[str, Any]:
     """Build a grounded, DB-derived answer to 'what is in my course?' questions.
 
     Broad questions have no single matching chunk, so semantic retrieval refuses
@@ -165,7 +168,7 @@ def _course_overview() -> dict[str, Any]:
     plural = "s" if len(names) != 1 else ""
 
     parts = [f"I have {len(names)} course document{plural} indexed: {doc_phrase}."]
-    if topics:
+    if detail == "long" and topics:
         parts.append("The material covers " + ", ".join(topics[:6]) + ".")
     parts.append("Ask about a specific topic for a cited answer.")
 
@@ -247,10 +250,10 @@ def _answer_to_response(answer: Any) -> AskResponse:
 # Endpoints
 # --------------------------------------------------------------------------- #
 @app.get("/course/overview")
-def course_overview() -> dict[str, Any]:
+def course_overview(detail: Literal["short", "long"] = "long") -> dict[str, Any]:
     """Answer broad 'what is in my course?' questions from the shared index."""
     try:
-        return _course_overview()
+        return _course_overview(detail)
     except Exception as exc:
         return {"answer": f"Could not read the course index: {exc}", "grounded": False}
 
@@ -277,7 +280,8 @@ def ask_question(payload: AskRequest) -> AskResponse:
         )
 
     try:
-        retrieved = retrieve(question)
+        k = RETRIEVE_K_LONG if payload.answer_length == "long" else RETRIEVE_K
+        retrieved = retrieve(question, k=k)
     except Exception as exc:  # e.g. Ollama / embedding service unavailable
         raise HTTPException(
             status_code=502,
@@ -293,7 +297,7 @@ def ask_question(payload: AskRequest) -> AskResponse:
         )
 
     try:
-        answer = generate(retrieved, question)
+        answer = generate(retrieved, question, answer_length=payload.answer_length)
     except Exception as exc:  # e.g. Ollama chat model unavailable
         raise HTTPException(
             status_code=502,

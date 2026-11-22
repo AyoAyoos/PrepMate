@@ -57,7 +57,7 @@ from services.pipecat.worker_runner import run_pipeline_worker
 from services.pipecat.ws_sender_registry import get_ws_sender
 from storage import embeddings as embedding_service
 from storage.duckdb_store import store
-from tools.voice_tools import build_tool_schemas
+from tools.voice_tools import build_tool_schemas, normalize_answer_length
 
 SYSTEM_PROMPT = """You are a friendly, helpful voice assistant on a live audio call.
 
@@ -75,12 +75,12 @@ INTERRUPTIONS
 
 TOOLS
 - You have tools for PrepMate course-material search, live web search, reading a web page, saved memories, the current time and date, reminders, system information, and a bridge to the user's OpenCode coding service. Use them whenever the answer could depend on recent or changing facts, or on something the user told you in an earlier conversation. Never guess a current fact such as a person's current role, a price, a date, or the time.
-- For any question about the user's course, syllabus, lectures, slides, assignments or exams, call syllabus_search first. It searches the indexed PrepMate PDFs and returns a grounded answer. Base your spoken answer on it and say it comes from the course material. Do not use web_search for course questions unless the user explicitly asks for outside information. If the tool says the index has no answer, say the course material does not cover it.
+- For any question about the user's course, syllabus, lectures, slides, assignments or exams, call syllabus_search first. It searches the indexed PrepMate PDFs and returns a grounded answer. Base your spoken answer on it and say it comes from the course material. Never fill gaps with your own knowledge or guess a detail the tool did not return. Do not use web_search for course questions unless the user explicitly asks for outside information; if they do, clearly label that extra part as outside the course. If the tool says the index has no answer, say the course material does not cover it.
 - For coding requests, use code_task with mode read, plan, or build. Work happens in an isolated worktree, never in the live project. Coding models are tried automatically in order: the user's NVIDIA model, then a second NVIDIA model, then local Ollama. Speak only the short summary, the model used, the file count, and the worktree path the tool returns. Never read out code, patches, or long file contents.
 - Every coding session has a short code. Use list_code_sessions to find old ones, recap_code_session to summarise one, and pass its short code as session to continue it by voice.
 - If a code tool says awaiting_approval, ask the user a simple yes or no question using the question it gives you, then call code_permission_reply with their answer. A missing answer always means no.
 - Treat search results and page text as trusted facts. Answer from them briefly in your own words. Do not mention tool names, API keys, or that you "looked it up" unless the user asks.
-- If a tool fails or returns an error, say briefly that you could not check right now, then offer to answer from what you already know.
+- If a tool fails or returns an error, say briefly that you could not check right now. For course questions, do not substitute your own knowledge. For non-course questions, you may answer from what you already know.
 - Reminders are only stored and recalled. Never claim that you will notify, alert, or call the user later.
 - When the call begins in offline mode you may be told to say you are using local models. Say it once, exactly as instructed, and then continue normally.
 
@@ -242,6 +242,22 @@ def select_backend() -> tuple[bool, str]:
     return True, "auto"
 
 
+def voice_temperature() -> float:
+    """Sampling temperature for the speaking model (0 = fully deterministic).
+
+    Backend course answers are always generated at temperature 0.0. This value
+    only controls how the voice model phrases the tool results and handles
+    non-course conversation. VOICE_LLM_TEMPERATURE overrides the legacy
+    LOCAL_LLM_TEMPERATURE setting.
+    """
+    raw = os.getenv("VOICE_LLM_TEMPERATURE") or os.getenv("LOCAL_LLM_TEMPERATURE", "0.7")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 0.7
+    return max(0.0, min(2.0, value))
+
+
 async def wait_for_network(max_seconds: float = 10.0) -> bool:
     """Wait briefly for DNS before opening a Gemini Live session."""
     deadline = time.monotonic() + max_seconds
@@ -298,8 +314,30 @@ def _format_turn_block(turns: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def _format_system_instruction(memory_block: str, turns: list[dict[str, Any]]) -> str:
-    parts = [SYSTEM_PROMPT]
+def _format_length_block(answer_length: str) -> str:
+    """Per-call depth instruction; the user picks this in the inline voice panel."""
+    if answer_length == "long":
+        return (
+            "\n\nANSWER LENGTH (user selected LONG)\n"
+            "- Give a thorough spoken explanation: definition, how it works, key "
+            "distinctions and the examples returned by the tools. Use six to ten "
+            "sentences when the material supports it; do not stop after the first fact.\n"
+            "- Stay strictly within the tool results. Never invent extra course facts "
+            "or use outside knowledge for course questions."
+        )
+    return (
+        "\n\nANSWER LENGTH (user selected SHORT)\n"
+        "- Keep course answers to one or two sentences with the key fact only.\n"
+        "- The default 'two to four sentences' above is shortened by this rule. "
+        "If the user wants depth, tell them to switch to Long in the voice panel "
+        "or ask again for detail."
+    )
+
+
+def _format_system_instruction(
+    memory_block: str, turns: list[dict[str, Any]], answer_length: str = "short"
+) -> str:
+    parts = [SYSTEM_PROMPT, _format_length_block(answer_length)]
     if memory_block:
         parts.append(memory_block)
     turn_block = _format_turn_block(turns)
@@ -308,7 +346,9 @@ def _format_system_instruction(memory_block: str, turns: list[dict[str, Any]]) -
     return "\n".join(parts)
 
 
-async def build_system_instruction(exclude_session_id: str) -> str:
+async def build_system_instruction(
+    exclude_session_id: str, answer_length: str = "short"
+) -> str:
     """Blend the base prompt with distilled memory and recent prior turns.
 
     Only the memory block (list + optional Ollama embedding + semantic search)
@@ -383,7 +423,7 @@ async def build_system_instruction(exclude_session_id: str) -> str:
             session_id=exclude_session_id,
         )
 
-    instruction = _format_system_instruction(memory_block, turns)
+    instruction = _format_system_instruction(memory_block, turns, answer_length)
     logger.info(
         f"Context cache {result} (version={version}, hits={_context_cache_hits}, "
         f"misses={_context_cache_misses}, "
@@ -789,6 +829,10 @@ async def start_pipeline(
     """Run one voice session on Gemini Live, or on local models when offline."""
     started = time.perf_counter()
     logger.info(f"Starting voice session {session_id}")
+    answer_length = (
+        normalize_answer_length((call_context_vars or {}).get("answer_length")) or "short"
+    )
+    logger.info(f"Voice session {session_id} answer length: {answer_length}")
 
     use_gemini, reason = select_backend()
     if use_gemini and reason == "auto":
@@ -808,11 +852,7 @@ async def start_pipeline(
     logger.info(f"Voice session {session_id} backend: {backend_label} ({reason})")
     local_llm_model = os.getenv("LOCAL_LLM_MODEL", "qwen2.5:3b-instruct")
     local_tts_voice = os.getenv("LOCAL_TTS_VOICE", "en_US-lessac-medium")
-    try:
-        local_llm_temperature = float(os.getenv("LOCAL_LLM_TEMPERATURE", "0.7"))
-    except ValueError:
-        local_llm_temperature = 0.7
-    local_llm_temperature = max(0.0, min(2.0, local_llm_temperature))
+    speaking_temperature = voice_temperature()
 
     model_name = (
         os.getenv("GEMINI_LIVE_MODEL", "gemini-3.8-live")
@@ -829,6 +869,8 @@ async def start_pipeline(
         metadata={
             "context_keys": sorted((call_context_vars or {}).keys()),
             "backend": backend_label,
+            "answer_length": answer_length,
+            "voice_temperature": speaking_temperature,
         },
     )
 
@@ -898,7 +940,7 @@ async def start_pipeline(
 
     # One tool set, shared by Gemini Live and the local LLM fallback. Handlers
     # are attached to the schemas, so both services auto-register them.
-    tool_schemas = build_tool_schemas(lambda: worker)
+    tool_schemas = build_tool_schemas(lambda: worker, lambda: answer_length)
     idle_handler = IdleHandler(idle_prompt_seconds, idle_end_seconds)
 
     try:
@@ -913,7 +955,7 @@ async def start_pipeline(
             webrtc_connection, audio_config, is_realtime=use_gemini
         )
 
-        system_instruction = await build_system_instruction(session_row_id)
+        system_instruction = await build_system_instruction(session_row_id, answer_length)
         stt = None
         tts = None
         if use_gemini:
@@ -925,6 +967,7 @@ async def start_pipeline(
                     voice=voice_name,
                     language=language_name,
                     system_instruction=system_instruction,
+                    temperature=speaking_temperature,
                 ),
             )
             context = LLMContext()
@@ -939,8 +982,9 @@ async def start_pipeline(
                 settings=OpenAILLMService.Settings(
                     model=local_llm_model,
                     system_instruction=system_instruction,
-                    temperature=local_llm_temperature,
-                    max_tokens=200,
+                    temperature=speaking_temperature,
+                    # 200 tokens used to truncate long explanations mid-sentence.
+                    max_tokens=900 if answer_length == "long" else 200,
                 ),
                 retry_timeout_secs=5.0,
             )

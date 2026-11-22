@@ -32,11 +32,19 @@ export interface VoiceCourseIndexStatus {
   documents: number | null;
 }
 
+export type VoiceAnswerLength = "short" | "long";
+
+export interface VoiceAnswerPolicy {
+  course_only: boolean;
+  voice_temperature: number;
+}
+
 export interface VoiceIntegrationStatus {
   prepmate_api_base: string;
   syllabus_search: boolean;
   reachable: boolean;
   documents: number | null;
+  answer_policy?: VoiceAnswerPolicy;
   course_index: VoiceCourseIndexStatus;
 }
 

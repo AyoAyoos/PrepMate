@@ -67,7 +67,12 @@ the Piper voice and Ollama models are reused from your local cache.
    questions it POSTs to `PREPMATE_API_BASE/ask`, then speaks the grounded answer.
    The backend serves both chat and voice from `Backend/vectorstore/course.duckdb`
    with a cosine HNSW index; the voice process has no course-file access.
-3. **Fallbacks:** with a Gemini key the agent uses Gemini Live. Without one it uses
+3. **Answer depth:** the header **Short / Long** selector changes both the voice
+   prompt and `/ask`'s generation prompt. Long mode retrieves more chunks and
+   raises the voice token cap from 200 to 900. Course facts stay course-only
+   (`/ask` temperature `0.0`); the speaking model's phrasing temperature is
+   `VOICE_LLM_TEMPERATURE` (default `0.7`).
+4. **Fallbacks:** with a Gemini key the agent uses Gemini Live. Without one it uses
    local Whisper (STT), Ollama (LLM) and Piper (TTS). Web search remains optional
    and needs `TAVILY_API_KEY`.
 
