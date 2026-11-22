@@ -27,6 +27,20 @@ $pidFile = Join-Path $root ".prepmate-pids.json"
 $logDir = Join-Path $root "logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
+# Vite prints its chosen port in the log; use it so -Status and startup messages
+# show a real URL instead of "check the npm output".
+$frontendUrl = "http://localhost:8080/"
+$frontendLog = Join-Path $logDir "frontend.out.log"
+if (Test-Path $frontendLog) {
+    $localLine = Get-Content $frontendLog |
+        Where-Object { $_ -match "Local:" } |
+        Select-Object -Last 1
+    if ($localLine) {
+        $cleanLine = $localLine -replace "\x1b\[[0-9;]*m", ""
+        if ($cleanLine -match "https?://[A-Za-z0-9._:-]+/") { $frontendUrl = $Matches[0] }
+    }
+}
+
 $services = @(
     @{
         Name = "backend"
@@ -56,8 +70,8 @@ if (-not $NoFrontend) {
         # npm is a .cmd shim, so it must be launched through cmd /c.
         Args = @("/c", "npm", "run", "dev")
         Cwd = Join-Path $root "Frontend"
-        Health = $null
-        Url = "check the npm output for the local URL"
+        Health = $frontendUrl
+        Url = $frontendUrl
     }
 }
 
@@ -133,5 +147,5 @@ foreach ($svc in $services) {
 }
 
 $pids | ConvertTo-Json | Set-Content $pidFile -Encoding utf8
-Write-Host "`nPrepMate is starting. Voice service: http://127.0.0.1:45124/ (use the inline Voice button in chat)"
+Write-Host "`nPrepMate is starting. Frontend: $frontendUrl  |  Voice service: http://127.0.0.1:45124/ (use the inline Voice button in chat)"
 Write-Host "Run .\Start-PrepMate.ps1 -Status to check, -Stop to shut everything down."
