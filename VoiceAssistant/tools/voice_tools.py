@@ -85,6 +85,22 @@ def _coerce_limit(value: Any, default: int, maximum: int) -> int:
 
 # ------------------------------------------------------- PrepMate syllabus RAG
 
+# Broad "what is in my course?" questions have no single relevant chunk, so the
+# RAG relevance gate refuses them. Route those to the DB-backed overview instead.
+_OVERVIEW_QUESTION_RE = re.compile(
+    r"(?:what(?:'s|\s+is|\s+are)\s+(?:in\s+)?(?:my|the)\s+course\b)"
+    r"|(?:\b(?:what|which|list|show|tell|describe)\b.*\b(?:course|syllabus)\b.*"
+    r"\b(?:materials?|documents?|files?|topics?|subjects?|contents?|available|cover(?:ed|ing|s)?)\b)"
+    r"|(?:\b(?:topics?|subjects?|materials?|documents?|files?|contents?)\b.*\b(?:course|syllabus)\b)"
+    r"|(?:\b(?:course|syllabus)\s+(?:materials?|documents?|files?|contents?)\b)"
+    r"|(?:\b(?:what|which|list|show)\b.{0,40}\b(?:documents?|files?|materials?)\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_overview_question(question: str) -> bool:
+    return bool(_OVERVIEW_QUESTION_RE.search(question))
+
 
 async def syllabus_search(params: FunctionCallParams) -> None:
     """Answer spoken course questions from PrepMate's DuckDB + HNSW-backed /ask endpoint."""
@@ -100,8 +116,33 @@ async def syllabus_search(params: FunctionCallParams) -> None:
             return
 
         base = os.getenv("PREPMATE_API_BASE", "http://127.0.0.1:8000").strip().rstrip("/")
-        # RAG retrieval + generation can take longer than the short web timeout.
+        # Retrieval + generation (and the DB overview) can exceed the short web timeout.
         async with httpx.AsyncClient(timeout=30.0) as client:
+            if _is_overview_question(question):
+                overview = await client.get(f"{base}/course/overview")
+                if overview.status_code == 200:
+                    payload = overview.json()
+                    answer = " ".join(str(payload.get("answer") or "").split())[:_MAX_RESULT_CHARS]
+                    sources = [
+                        str(doc.get("source") or "")
+                        for doc in (payload.get("documents") or [])
+                        if isinstance(doc, dict) and doc.get("source")
+                    ]
+                    await params.result_callback(
+                        {
+                            "answer": answer,
+                            "grounded": bool(payload.get("grounded")),
+                            "sources": sources,
+                            "note": (
+                                "Overview read directly from the indexed course documents. "
+                                "Ask about a specific topic for a cited answer."
+                            ),
+                            "source": "prepmate-course-overview",
+                        },
+                        properties=FunctionCallResultProperties(run_llm=True),
+                    )
+                    return
+
             response = await client.post(
                 f"{base}/ask",
                 json={"question": question[:1000]},
@@ -113,6 +154,7 @@ async def syllabus_search(params: FunctionCallParams) -> None:
         payload = response.json()
         answer = " ".join(str(payload.get("answer") or "").split())[:_MAX_RESULT_CHARS]
         note = " ".join(str(payload.get("note") or "").split())[:500]
+        grounded = bool(payload.get("grounded"))
         sources: list[str] = []
         for citation in (payload.get("citations") or [])[:4]:
             if not isinstance(citation, dict):
@@ -125,11 +167,18 @@ async def syllabus_search(params: FunctionCallParams) -> None:
 
         result: dict[str, Any] = {
             "answer": answer,
-            "grounded": bool(payload.get("grounded")),
+            "grounded": grounded,
             "sources": sources,
             "note": note,
             "source": "prepmate-syllabus-rag",
         }
+        if not grounded:
+            result["hint"] = (
+                "That question is not covered by the indexed course material. "
+                "Tell the user you can answer course questions, and suggest a "
+                "specific topic such as 'What is stopword removal?' or "
+                "'Explain semantic analysis'."
+            )
         if not answer:
             result["error"] = "The course index did not return an answer."
         await params.result_callback(
@@ -1389,8 +1438,10 @@ def build_tool_schemas(worker_getter) -> list[FunctionSchema]:
                 "Answer questions about the user's course, syllabus, lectures, slides, "
                 "assignments or exams by searching the indexed PrepMate course PDFs. "
                 "Use this FIRST for any course-material question instead of web_search "
-                "or your own knowledge. Returns the grounded answer and the source "
-                "files it came from."
+                "or your own knowledge. It also handles broad questions such as "
+                "'what is in my course?', 'what materials are available?' or 'what "
+                "topics does this course cover?' by returning a DB-backed overview. "
+                "Returns the grounded answer and the source files it came from."
             ),
             properties={
                 "question": {

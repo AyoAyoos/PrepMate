@@ -85,6 +85,18 @@ function Test-Health([string]$Url) {
     }
 }
 
+function Get-PidByPort([string]$Url) {
+    try {
+        $port = ([uri]$Url).Port
+        $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($conn) { return [int]$conn.OwningProcess }
+    } catch {
+        return $null
+    }
+    return $null
+}
+
 function Resolve-Exe($Service) {
     if (Test-Path $Service.Exe) { return $Service.Exe }
     $fallback = Get-Command $Service.Fallback -ErrorAction SilentlyContinue
@@ -107,6 +119,13 @@ if ($Status) {
 
 if ($Stop) {
     $pids = Read-Pids
+    # Also discover live listeners by port, in case an earlier run lost the PID file.
+    foreach ($svc in $services) {
+        if ($svc.Health -and -not $pids.ContainsKey($svc.Name)) {
+            $existingPid = Get-PidByPort $svc.Health
+            if ($existingPid) { $pids[$svc.Name] = $existingPid }
+        }
+    }
     foreach ($name in @($pids.Keys)) {
         $processId = [int]$pids[$name]
         # taskkill /T also removes children (e.g. the node process behind npm/cmd).
@@ -125,6 +144,11 @@ $pids = Read-Pids
 foreach ($svc in $services) {
     if ($svc.Health -and (Test-Health $svc.Health)) {
         Write-Host "$($svc.Name) is already healthy at $($svc.Health)"
+        # Keep (or rediscover) its PID so -Stop can still shut it down later.
+        if (-not $pids.ContainsKey($svc.Name)) {
+            $existingPid = Get-PidByPort $svc.Health
+            if ($existingPid) { $pids[$svc.Name] = $existingPid }
+        }
         continue
     }
 

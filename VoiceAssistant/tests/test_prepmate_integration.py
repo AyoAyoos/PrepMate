@@ -20,7 +20,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
 import bootstrap  # noqa: E402,F401  (vendored Pipecat on sys.path)
-from tools.voice_tools import syllabus_search  # noqa: E402
+from tools.voice_tools import _is_overview_question, syllabus_search  # noqa: E402
 
 
 class _FakeParams:
@@ -35,6 +35,25 @@ class _FakeParams:
 
 class _AskHandler(BaseHTTPRequestHandler):
     received: dict[str, Any] | None = None
+    overview_requests = 0
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib handler name
+        if self.path != "/course/overview":
+            self.send_error(404)
+            return
+        _AskHandler.overview_requests += 1
+        body = json.dumps(
+            {
+                "answer": "I have one course document indexed: NLP Unit 1.pdf.",
+                "grounded": True,
+                "documents": [{"source": "NLP Unit 1.pdf", "chunks": 42}],
+            }
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler name
         length = int(self.headers.get("Content-Length", "0"))
@@ -83,6 +102,7 @@ class SyllabusSearchIntegrationTest(unittest.TestCase):
             os.environ["PREPMATE_API_BASE"] = cls.old_base
 
     def test_tool_returns_grounded_answer_with_sources(self) -> None:
+        _AskHandler.received = None
         params = _FakeParams({"question": "What is RAG?"})
         asyncio.run(syllabus_search(params))
 
@@ -93,6 +113,38 @@ class SyllabusSearchIntegrationTest(unittest.TestCase):
         self.assertIn("retrieval augmented", params.result["answer"].lower())
         self.assertEqual(params.result["sources"], ["NLP Unit 1.pdf, page 7"])
         self.assertEqual(_AskHandler.received, {"question": "What is RAG?"})
+
+    def test_broad_course_question_uses_db_backed_overview(self) -> None:
+        _AskHandler.received = None
+        before = _AskHandler.overview_requests
+        params = _FakeParams({"question": "What course materials are available?"})
+        asyncio.run(syllabus_search(params))
+
+        self.assertIsNotNone(params.result)
+        assert params.result is not None
+        self.assertEqual(params.result["source"], "prepmate-course-overview")
+        self.assertTrue(params.result["grounded"])
+        self.assertEqual(params.result["sources"], ["NLP Unit 1.pdf"])
+        self.assertEqual(_AskHandler.overview_requests, before + 1)
+        self.assertIsNone(_AskHandler.received)  # /ask was not called
+
+    def test_overview_question_detection(self) -> None:
+        for question in (
+            "What course materials are available?",
+            "What's in my course?",
+            "Tell me about the topics covered in this course",
+            "What documents do I have?",
+        ):
+            with self.subTest(question=question):
+                self.assertTrue(_is_overview_question(question))
+
+        for question in (
+            "What is stopword removal?",
+            "Explain semantic analysis",
+            "What is the capital of France?",
+        ):
+            with self.subTest(question=question):
+                self.assertFalse(_is_overview_question(question))
 
 
 if __name__ == "__main__":

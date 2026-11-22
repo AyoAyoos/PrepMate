@@ -5,6 +5,7 @@ can talk to the backend instead of using mocks.
 
 Endpoints (contract matches Frontend/src/lib/api.ts):
     GET    /documents   -> list of currently stored source documents
+    GET    /course/overview -> DB-backed summary of what the course contains
     POST   /ask         -> ask a question, get a grounded answer + citations
     POST   /ingest      -> append a PDF (or clear + re-ingest) by filename
     POST   /ingest/upload -> append user-uploaded files (multipart, multiple,
@@ -17,6 +18,7 @@ Run with:
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -98,6 +100,84 @@ def _chunk_counts_by_source() -> dict[str, int]:
         return {}
 
 
+_OVERVIEW_TOPIC_RE = re.compile(r"(?:\b\d{1,2}\.|●)\s+([A-Z][^●○]{2,70})")
+
+
+def _overview_topics(source: str) -> list[str]:
+    """Pull clean section headings from the opening pages of one document."""
+    chunks: list = []
+    for page in (0, 1, 2):
+        chunks.extend(store.source_page_chunks(source, page))
+    text = " ".join(" ".join(chunk.page_content.split()) for chunk in chunks)
+
+    topics: list[str] = []
+
+    # The first slide usually names the unit(s), e.g. "Unit III (Semantic
+    # Analysis) & Unit IV (Discourse & Pragmatic Analysis)".
+    unit = re.search(
+        r"(Unit\s+[IVX0-9]+(?:\s*\([^)]*\))?"
+        r"(?:\s*&\s*Unit\s+[IVX0-9]+(?:\s*\([^)]*\))?)*)"
+        r"(:\s*[^●○\d]{3,60})?",
+        text,
+    )
+    if unit:
+        title = (unit.group(1) + (unit.group(2) or "")).strip(" .,-")
+        if 2 <= len(title.split()) <= 20:
+            topics.append(title)
+
+    for match in _OVERVIEW_TOPIC_RE.finditer(text):
+        phrase = match.group(1).strip(" .,-")
+        words = phrase.split()
+        # Titles are short and have no "Title: explanation" body text.
+        if not (2 <= len(words) <= 6) or ":" in phrase:
+            continue
+        if phrase.lower() in {topic.lower() for topic in topics}:
+            continue
+        topics.append(phrase)
+    return topics[:8]
+
+
+def _course_overview() -> dict[str, Any]:
+    """Build a grounded, DB-derived answer to 'what is in my course?' questions.
+
+    Broad questions have no single matching chunk, so semantic retrieval refuses
+    them. This endpoint reads document names and opening headings straight from
+    the shared DuckDB index instead — no LLM, no invented topics.
+    """
+    counts = _chunk_counts_by_source()
+    if not counts:
+        return {
+            "answer": "No course documents are indexed yet, so I cannot describe the course material.",
+            "grounded": False,
+            "documents": [],
+            "chunks": 0,
+            "topics": [],
+        }
+
+    names = list(counts)
+    topics: list[str] = []
+    for source in names:
+        for topic in _overview_topics(source):
+            if topic.lower() not in {t.lower() for t in topics}:
+                topics.append(topic)
+
+    doc_phrase = names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
+    plural = "s" if len(names) != 1 else ""
+
+    parts = [f"I have {len(names)} course document{plural} indexed: {doc_phrase}."]
+    if topics:
+        parts.append("The material covers " + ", ".join(topics[:6]) + ".")
+    parts.append("Ask about a specific topic for a cited answer.")
+
+    return {
+        "answer": " ".join(parts),
+        "grounded": True,
+        "documents": [{"source": name, "chunks": count} for name, count in counts.items()],
+        "chunks": sum(counts.values()),
+        "topics": topics,
+    }
+
+
 def _pdf_page_count(filename: str) -> int:
     """Number of pages in a source PDF, if the file is present."""
     try:
@@ -166,6 +246,15 @@ def _answer_to_response(answer: Any) -> AskResponse:
 # --------------------------------------------------------------------------- #
 # Endpoints
 # --------------------------------------------------------------------------- #
+@app.get("/course/overview")
+def course_overview() -> dict[str, Any]:
+    """Answer broad 'what is in my course?' questions from the shared index."""
+    try:
+        return _course_overview()
+    except Exception as exc:
+        return {"answer": f"Could not read the course index: {exc}", "grounded": False}
+
+
 @app.get("/documents", response_model=list[StoredDocument])
 def get_documents() -> list[StoredDocument]:
     """Return the source documents currently in the vector store."""
