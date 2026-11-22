@@ -1,0 +1,28 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  color: var(--nb-ink);
+  font-family: var(--nb-font-display);
+  background-color: var(--nb-bg);
+  background-image: radial-gradient(#00000022 1.5px, transparent 1.5px);
+  background-size: 22px 22px;
+}
+
+button {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 4px solid var(--nb-blue);
+  outline-offset: 4px;
+}

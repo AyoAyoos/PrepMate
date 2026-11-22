@@ -1,0 +1,158 @@
+.page {
+  min-height: 100vh;
+  padding: 32px 16px;
+}
+
+.container {
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.title {
+  display: inline-block;
+  margin: 0;
+  padding: 6px 16px;
+  border: var(--nb-border-thick);
+  border-radius: var(--nb-radius);
+  background: var(--nb-yellow);
+  box-shadow: var(--nb-shadow-lg);
+  font-size: clamp(2rem, 6vw, 3.75rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  transform: rotate(-1deg);
+}
+
+.subtitle {
+  max-width: 60ch;
+  margin: 16px 0 0;
+  color: var(--nb-ink-soft);
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.card {
+  padding: 24px;
+  border: var(--nb-border-thick);
+  border-radius: var(--nb-radius);
+  background: var(--nb-surface);
+  box-shadow: var(--nb-shadow-lg);
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.waveform {
+  margin-top: 24px;
+}
+
+.transcript {
+  margin-top: 24px;
+}
+
+.audio {
+  display: none;
+}
+
+.compactPage {
+  padding: 8px;
+}
+
+.compactCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: var(--nb-border);
+  border-radius: var(--nb-radius);
+  background: var(--nb-surface);
+  box-shadow: var(--nb-shadow-sm);
+}
+
+.compactControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compactControls button {
+  min-height: 40px;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+}
+
+.compactWaveform {
+  height: 52px;
+}
+
+.compactTranscript {
+  min-height: 44px;
+  max-height: 64px;
+  padding: 8px;
+  overflow: hidden;
+  border: 3px dashed var(--nb-ink);
+  border-radius: var(--nb-radius-sm);
+  background: var(--nb-bg);
+  font-family: var(--nb-font-mono);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.expandButton {
+  align-self: flex-end;
+  padding: 4px 8px;
+  border: 2px solid var(--nb-ink);
+  border-radius: var(--nb-radius-sm);
+  background: var(--nb-surface);
+  color: var(--nb-ink);
+  font-family: var(--nb-font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.expandButton:hover {
+  background: var(--nb-yellow);
+}
+
+@media (min-width: 768px) {
+  .controls {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
+@media (max-width: 767px) {
+  .page {
+    padding: 24px 12px;
+  }
+
+  .header {
+    flex-direction: column;
+  }
+
+  .card {
+    padding: 16px;
+    box-shadow: var(--nb-shadow);
+  }
+
+  .controls button {
+    width: 100%;
+  }
+}

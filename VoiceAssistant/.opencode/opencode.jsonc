@@ -1,0 +1,73 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Coding models for voice code_task sessions. The credential comes
+  // from the NVIDIA_API_KEY environment variable on the OpenCode service;
+  // never put the key in this file. This is intentionally NOT the global
+  // OpenCode default: tools/voice_tools.py selects these for code_task only,
+  // then falls back to local Ollama.
+  "providers": {
+    "nvidia": {
+      "name": "NVIDIA NIM",
+      "env": ["NVIDIA_API_KEY"],
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://integrate.api.nvidia.com/v1"
+      },
+      "models": {
+        "minimaxai/minimax-m3.1-flash": {
+          "name": "MiniMax M3.1 Flash",
+          "modelID": "minimaxai/minimax-m3.1-flash",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
+        },
+        "nvidia/nemotron-3.5-lightning-30b-a3b": {
+          "name": "Nemotron 3.5 Lightning 30B A3B",
+          "modelID": "nvidia/nemotron-3.5-lightning-30b-a3b",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 16384
+          }
+        }
+      }
+    }
+  },
+
+  // Defense in depth for manual sessions opened inside D:\voice-assistant.
+  // Voice-created sessions also carry a stricter ruleset in their session
+  // permissions, because voice work happens in a worktree outside this root.
+  // No provider policy is set: all OpenCode models remain available.
+  // .env.example is documentation and stays editable; only real .env secrets
+  // are hard-denied.
+  "policies": [
+    { "action": "tool.use", "resource": "read:*.env", "effect": "deny" },
+    { "action": "tool.use", "resource": "read:*.env.*", "effect": "deny" },
+    { "action": "tool.use", "resource": "read:*.env.example", "effect": "allow" },
+    { "action": "tool.use", "resource": "edit:*.env", "effect": "deny" },
+    { "action": "tool.use", "resource": "edit:*.env.*", "effect": "deny" },
+    { "action": "tool.use", "resource": "edit:*.env.example", "effect": "allow" },
+    { "action": "tool.use", "resource": "shell:git push *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git reset --hard *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git clean *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git checkout -- *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git restore *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:rm *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:del *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:Remove-Item *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:Stop-Process *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:format *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:sudo *", "effect": "deny" }
+  ]
+}

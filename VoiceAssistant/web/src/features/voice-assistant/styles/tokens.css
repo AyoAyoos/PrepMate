@@ -1,0 +1,25 @@
+:root {
+  --nb-bg: #fff4e0;
+  --nb-surface: #ffffff;
+  --nb-ink: #000000;
+  --nb-ink-soft: #3a3a3a;
+
+  --nb-yellow: #ffd93d;
+  --nb-blue: #6c9cff;
+  --nb-pink: #ff8fab;
+  --nb-green: #6bdb8b;
+  --nb-red: #ff5c5c;
+  --nb-lilac: #c9b6ff;
+
+  --nb-border: 3px solid var(--nb-ink);
+  --nb-border-thick: 4px solid var(--nb-ink);
+  --nb-shadow-sm: 3px 3px 0 var(--nb-ink);
+  --nb-shadow: 6px 6px 0 var(--nb-ink);
+  --nb-shadow-lg: 10px 10px 0 var(--nb-ink);
+  --nb-shadow-hover: 8px 8px 0 var(--nb-ink);
+  --nb-radius-sm: 8px;
+  --nb-radius: 12px;
+
+  --nb-font-display: "Space Grotesk", system-ui, sans-serif;
+  --nb-font-mono: "Space Mono", ui-monospace, monospace;
+}

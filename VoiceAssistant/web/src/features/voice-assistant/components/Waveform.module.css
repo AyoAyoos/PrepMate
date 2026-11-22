@@ -1,0 +1,43 @@
+.waveform {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 72px;
+  padding: 8px;
+  border: var(--nb-border);
+  border-radius: var(--nb-radius-sm);
+  background: var(--nb-lilac);
+}
+
+.bar {
+  flex: 1;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--nb-ink);
+  transform: scaleY(0.2);
+  transform-origin: center;
+}
+
+.animatedBar {
+  animation: bar 0.9s ease-in-out infinite;
+}
+
+.analyserBar {
+  transition: transform 80ms linear;
+}
+
+@keyframes bar {
+  0%,
+  100% {
+    transform: scaleY(0.2);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animatedBar {
+    animation: none;
+  }
+}

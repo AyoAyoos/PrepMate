@@ -1,0 +1,182 @@
+#
+# Copyright (c) 2024-2026, Daily
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
+
+"""User turn stop strategy triggered by externally emitted frames."""
+
+import asyncio
+
+from pipecat.frames.frames import (
+    Frame,
+    InterimTranscriptionFrame,
+    TranscriptionFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
+)
+from pipecat.turns.types import ProcessFrameResult
+from pipecat.turns.user_stop.base_user_turn_stop_strategy import BaseUserTurnStopStrategy
+from pipecat.utils.asyncio.task_manager import BaseTaskManager
+
+
+class ExternalUserTurnStopStrategy(BaseUserTurnStopStrategy):
+    """User turn stop strategy controlled by an external processor.
+
+    This strategy does not determine when a user turn ends on its own, it relies
+    on a different processor in the pipeline which is responsible for emitting
+    `UserStoppedSpeakingFrame` frames.
+
+    """
+
+    def __init__(self, *, timeout: float = 0.5, wait_for_transcript: bool = True, **kwargs):
+        """Initialize the external user turn stop strategy.
+
+        Args:
+            timeout: A short delay used internally to handle consecutive or
+                slightly delayed transcriptions.
+            wait_for_transcript: When True (default), turn-stop signaling
+                waits for transcript text to arrive after the external
+                ``UserStoppedSpeakingFrame``. When False, the strategy
+                signals turn-stop as soon as that frame arrives —
+                independent of transcripts. Set this to False when local
+                turn detection is the intended driver of the conversation
+                (e.g. with a realtime LLM service consuming audio
+                directly), so transcripts are off the latency critical
+                path. ``LLMContextAggregatorPair`` flips this for you
+                when ``realtime_service_mode=True``.
+            **kwargs: Additional keyword arguments.
+        """
+        super().__init__(enable_user_speaking_frames=False, **kwargs)
+        self._timeout = timeout
+        self._wait_for_transcript = wait_for_transcript
+        self._text = ""
+        self._user_speaking = False
+        self._seen_interim_results = False
+        self._event = asyncio.Event()
+        self._task: asyncio.Task | None = None
+        self._external_stop_received = False
+
+    @property
+    def wait_for_transcript(self) -> bool:
+        """Whether turn-stop signaling waits for transcript text."""
+        return self._wait_for_transcript
+
+    @wait_for_transcript.setter
+    def wait_for_transcript(self, value: bool):
+        self._wait_for_transcript = value
+
+    async def reset(self):
+        """Reset the strategy to its initial state."""
+        await super().reset()
+        self._text = ""
+        self._user_speaking = False
+        self._seen_interim_results = False
+        self._external_stop_received = False
+        self._event.clear()
+
+    async def setup(self, task_manager: BaseTaskManager):
+        """Initialize the strategy with the given task manager.
+
+        Args:
+            task_manager: The task manager to be associated with this instance.
+        """
+        await super().setup(task_manager)
+        self._task = task_manager.create_task(self._task_handler(), f"{self}::_task_handler")
+
+    async def cleanup(self):
+        """Cleanup the strategy."""
+        await super().cleanup()
+        if self._task:
+            await self.task_manager.cancel_task(self._task)
+            self._task = None
+
+    async def process_frame(self, frame: Frame) -> ProcessFrameResult:
+        """Process an incoming frame to update strategy state.
+
+        Updates internal transcription text and VAD state. The user end turn
+        will be triggered when appropriate based on the collected frames.
+
+        Args:
+            frame: The frame to be analyzed.
+
+        Returns:
+            Always returns CONTINUE so subsequent stop strategies are evaluated.
+        """
+        if isinstance(frame, UserStartedSpeakingFrame):
+            await self._handle_user_started_speaking(frame)
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            await self._handle_user_stopped_speaking(frame)
+        elif isinstance(frame, InterimTranscriptionFrame):
+            await self._handle_interim_transcription(frame)
+        elif isinstance(frame, TranscriptionFrame):
+            await self._handle_transcription(frame)
+
+        return ProcessFrameResult.CONTINUE
+
+    async def _handle_user_started_speaking(self, _: UserStartedSpeakingFrame):
+        """Handle when the external service indicates the user is speaking."""
+        self._user_speaking = True
+        self._text = ""
+        self._seen_interim_results = False
+        self._external_stop_received = False
+        self._event.clear()
+
+    async def _handle_user_stopped_speaking(self, _: UserStoppedSpeakingFrame):
+        """Handle when the external service indicates the user has stopped speaking."""
+        self._user_speaking = False
+        self._external_stop_received = True
+        await self._maybe_trigger_user_turn_stopped()
+
+    async def _handle_interim_transcription(self, frame: InterimTranscriptionFrame):
+        self._seen_interim_results = True
+
+    async def _handle_transcription(self, frame: TranscriptionFrame):
+        """Handle user transcription."""
+        self._text += frame.text
+        # We just got a final result, so let's reset interim results.
+        self._seen_interim_results = False
+
+        # UserStoppedSpeakingFrame is a high-priority SystemFrame and can overtake
+        # a finalized transcript that the STT queued first. Once that finalized
+        # transcript arrives, no more transcript chunks are expected for this
+        # utterance, so waiting for the aggregation timeout only adds latency.
+        if (
+            self._wait_for_transcript
+            and self._external_stop_received
+            and not self._user_speaking
+            and frame.finalized
+            and self._text.strip()
+        ):
+            await self._maybe_trigger_user_turn_stopped()
+            return
+
+        # Preserve the debounce for non-finalized transcripts, which may be
+        # followed by additional transcription chunks.
+        self._event.set()
+
+    async def _task_handler(self):
+        """Asynchronously monitor transcriptions and trigger user end turn when ready.
+
+        If transcription text exists and the user is not currently speaking,
+        triggers the user end turn. Handles multiple or delayed transcriptions
+        gracefully.
+
+        """
+        while True:
+            try:
+                await asyncio.wait_for(self._event.wait(), timeout=self._timeout)
+                self._event.clear()
+            except TimeoutError:
+                await self._maybe_trigger_user_turn_stopped()
+
+    async def _maybe_trigger_user_turn_stopped(self):
+        if self._user_speaking:
+            return
+        if not self._wait_for_transcript:
+            # Fire as soon as the external stop signal arrives —
+            # transcripts (if any) are off the latency critical path.
+            await self.trigger_user_turn_stopped()
+            return
+        if not self._seen_interim_results and self._text:
+            await self.trigger_user_turn_stopped()
