@@ -59,12 +59,19 @@ from storage import embeddings as embedding_service
 from storage.duckdb_store import store
 from tools.voice_tools import build_tool_schemas, normalize_answer_length
 
-SYSTEM_PROMPT = """You are a friendly, helpful voice assistant on a live audio call.
+SYSTEM_PROMPT = """You are PrepMate's course-only voice assistant on a live audio call.
+
+SCOPE — READ FIRST
+- You answer ONLY from the course material indexed in PrepMate. Every factual answer must come from the syllabus_search tool result.
+- For any question about the course, syllabus, lectures, slides, assignments or exams, call syllabus_search first. Base your spoken answer only on what it returns and say it comes from the course material. Never fill gaps with your own knowledge or guess a detail the tool did not return.
+- If syllabus_search says the index has no answer, say the course material does not cover it. Do not guess.
+- For ANY question outside the course — general knowledge, current news, weather, prices, people, sports, personal advice, web pages, coding, time, or reminders — do not answer it and do not call any other tool. Say exactly: "I can only answer questions from the course material. Ask me something about the course."
+- Saved memories are not used. Earlier turns are only for resolving course follow-ups, never as evidence for a fact.
 
 SPEAKING STYLE
 - Your words are spoken aloud. Use plain spoken language: no Markdown, lists, bullets, headings, emoji, code, URLs, or special characters. Say numbers and dates the way people say them.
 - Answer directly. Usually two to four short sentences; longer only when the question truly needs an explanation. Do not repeat the question back, narrate your reasoning, or say you are an AI.
-- If a request is unclear, say so briefly and ask one clarifying question instead of guessing.
+- If a course request is unclear, say so briefly and ask one clarifying question instead of guessing.
 - Stay in the user's language. Be warm and conversational. Let the user lead after the greeting.
 
 INTERRUPTIONS
@@ -73,15 +80,10 @@ INTERRUPTIONS
 - Short acknowledgements from the user such as "yeah", "okay", "uh-huh" are not questions. Do not treat them as new requests; continue naturally or pause for their next message.
 - If the user's message is cut off, empty, or unclear, ask them once to repeat it briefly.
 
-TOOLS
-- You have tools for PrepMate course-material search, live web search, reading a web page, saved memories, the current time and date, reminders, system information, and a bridge to the user's OpenCode coding service. Use them whenever the answer could depend on recent or changing facts, or on something the user told you in an earlier conversation. Never guess a current fact such as a person's current role, a price, a date, or the time.
-- For any question about the user's course, syllabus, lectures, slides, assignments or exams, call syllabus_search first. It searches the indexed PrepMate PDFs and returns a grounded answer. Base your spoken answer on it and say it comes from the course material. Never fill gaps with your own knowledge or guess a detail the tool did not return. Do not use web_search for course questions unless the user explicitly asks for outside information; if they do, clearly label that extra part as outside the course. If the tool says the index has no answer, say the course material does not cover it.
-- For coding requests, use code_task with mode read, plan, or build. Work happens in an isolated worktree, never in the live project. Coding models are tried automatically in order: the user's NVIDIA model, then a second NVIDIA model, then local Ollama. Speak only the short summary, the model used, the file count, and the worktree path the tool returns. Never read out code, patches, or long file contents.
-- Every coding session has a short code. Use list_code_sessions to find old ones, recap_code_session to summarise one, and pass its short code as session to continue it by voice.
-- If a code tool says awaiting_approval, ask the user a simple yes or no question using the question it gives you, then call code_permission_reply with their answer. A missing answer always means no.
-- Treat search results and page text as trusted facts. Answer from them briefly in your own words. Do not mention tool names, API keys, or that you "looked it up" unless the user asks.
-- If a tool fails or returns an error, say briefly that you could not check right now. For course questions, do not substitute your own knowledge. For non-course questions, you may answer from what you already know.
-- Reminders are only stored and recalled. Never claim that you will notify, alert, or call the user later.
+TOOL
+- syllabus_search is your only information tool. It searches the indexed PrepMate PDFs and also answers broad questions such as "what is in my course?".
+- If syllabus_search returns an error, say briefly that the course index could not be checked. Never substitute your own knowledge.
+- Do not mention tool names, API keys, or that you "looked it up" unless the user asks.
 - When the call begins in offline mode you may be told to say you are using local models. Say it once, exactly as instructed, and then continue normally.
 
 ENDING THE CONVERSATION
@@ -163,9 +165,6 @@ GOOGLE_API_HOST = "generativelanguage.googleapis.com"
 OFFLINE_NOTICE = "I'm offline, using local models."
 
 _memory_client: httpx.AsyncClient | None = None
-_context_cache: dict[str, tuple[float, str, list[str]]] = {}
-_context_cache_hits = 0
-_context_cache_misses = 0
 
 
 async def get_memory_client() -> httpx.AsyncClient:
@@ -246,9 +245,9 @@ def voice_temperature() -> float:
     """Sampling temperature for the speaking model (0 = fully deterministic).
 
     Backend course answers are always generated at temperature 0.0. This value
-    only controls how the voice model phrases the tool results and handles
-    non-course conversation. VOICE_LLM_TEMPERATURE overrides the legacy
-    LOCAL_LLM_TEMPERATURE setting.
+    only controls how the voice model phrases course tool results. Voice is
+    course-only, so it never handles non-course conversation. VOICE_LLM_TEMPERATURE
+    overrides the legacy LOCAL_LLM_TEMPERATURE setting.
     """
     raw = os.getenv("VOICE_LLM_TEMPERATURE") or os.getenv("LOCAL_LLM_TEMPERATURE", "0.7")
     try:
@@ -283,28 +282,12 @@ async def wait_for_network(max_seconds: float = 10.0) -> bool:
             await asyncio.sleep(min(2 ** (attempt - 1), 4))
 
 
-def _format_memory_block(memories: list[dict[str, Any]]) -> str:
-    """Format only the expensive-to-build memory portion of the prompt."""
-    if not memories:
-        return ""
-    parts = [
-        "\n\nPERSISTENT CONTEXT ABOUT THE USER\n"
-        "Use these facts naturally when relevant. Never say that you retrieved, "
-        "stored, or remember them, and never list them unless asked."
-    ]
-    for memory in memories[:20]:
-        content = _short(str(memory.get("content", "")), 300)
-        if content:
-            parts.append(f"- {content}")
-    return "\n".join(parts)
-
-
 def _format_turn_block(turns: list[dict[str, Any]]) -> str:
     """Recent turns are read fresh on every call, so they are never cached."""
     if not turns:
         return ""
     parts = [
-        "\n\nRECENT EARLIER CONVERSATION (for continuity only; do not repeat it verbatim)"
+        "\n\nRECENT EARLIER COURSE CONVERSATION (for resolving follow-ups only; not evidence for new facts)"
     ]
     for turn in turns[-20:]:
         role = "User" if turn.get("role") == "user" else "Assistant"
@@ -320,26 +303,25 @@ def _format_length_block(answer_length: str) -> str:
         return (
             "\n\nANSWER LENGTH (user selected LONG)\n"
             "- Give a thorough spoken explanation: definition, how it works, key "
-            "distinctions and the examples returned by the tools. Use six to ten "
-            "sentences when the material supports it; do not stop after the first fact.\n"
-            "- Stay strictly within the tool results. Never invent extra course facts "
-            "or use outside knowledge for course questions."
+            "distinctions and the examples returned by syllabus_search. Use six to "
+            "ten sentences when the course material supports it.\n"
+            "- Stay strictly within the syllabus_search result. Never invent course "
+            "facts, use outside knowledge, or answer a non-course question."
         )
     return (
         "\n\nANSWER LENGTH (user selected SHORT)\n"
         "- Keep course answers to one or two sentences with the key fact only.\n"
         "- The default 'two to four sentences' above is shortened by this rule. "
         "If the user wants depth, tell them to switch to Long in the voice panel "
-        "or ask again for detail."
+        "or ask again for detail.\n"
+        "- For a question outside the course, use the exact course-only refusal."
     )
 
 
 def _format_system_instruction(
-    memory_block: str, turns: list[dict[str, Any]], answer_length: str = "short"
+    turns: list[dict[str, Any]], answer_length: str = "short"
 ) -> str:
     parts = [SYSTEM_PROMPT, _format_length_block(answer_length)]
-    if memory_block:
-        parts.append(memory_block)
     turn_block = _format_turn_block(turns)
     if turn_block:
         parts.append(turn_block)
@@ -349,69 +331,15 @@ def _format_system_instruction(
 async def build_system_instruction(
     exclude_session_id: str, answer_length: str = "short"
 ) -> str:
-    """Blend the base prompt with distilled memory and recent prior turns.
+    """Build the course-only prompt with recent turns for follow-up resolution.
 
-    Only the memory block (list + optional Ollama embedding + semantic search)
-    is cached. Recent turns are re-read every call so a new message is always
-    visible; this keeps back-to-back calls fast without going stale.
+    Saved memories are deliberately not loaded: they are not course evidence.
+    Recent turns are re-read every call so a new message is always visible.
     """
-    global _context_cache_hits, _context_cache_misses
-
     started = time.perf_counter()
-    version = await store.memory_version()
-    try:
-        ttl = float(os.getenv("CONTEXT_CACHE_TTL_SECONDS", "300"))
-    except ValueError:
-        ttl = 300.0
-
-    cached = _context_cache.get(version)
-    if cached is not None and cached[0] > time.monotonic():
-        _context_cache_hits += 1
-        memory_block, memory_ids = cached[1], cached[2]
-        result = "HIT"
-    else:
-        _context_cache_misses += 1
-        memories: list[dict[str, Any]] = []
-        try:
-            memory_limit = int(os.getenv("MEMORY_CONTEXT_LIMIT", "20"))
-            memories = await store.list_memories(limit=memory_limit)
-            if len(memories) > 8:
-                query = " ".join(str(item.get("content", "")) for item in memories[-8:])
-                embedding = await embedding_service.embedder.embed_text(query)
-                if embedding:
-                    semantic = await store.search_memories(
-                        embedding=embedding, limit=memory_limit
-                    )
-                    merged: dict[str, dict[str, Any]] = {
-                        str(item["id"]): item for item in semantic
-                    }
-                    for item in memories:
-                        merged.setdefault(str(item["id"]), item)
-                    memories = list(merged.values())[:memory_limit]
-        except Exception as exc:
-            await _record_error(
-                "context-builder",
-                f"Could not load persistent memories: {exc}",
-                exc=exc,
-                session_id=exclude_session_id,
-            )
-            memories = []
-
-        memory_ids = [str(item["id"]) for item in memories]
-        memory_block = _format_memory_block(memories)
-        _context_cache[version] = (time.monotonic() + ttl, memory_block, memory_ids)
-        if len(_context_cache) > 16:
-            for stale_version in list(_context_cache)[:-16]:
-                _context_cache.pop(stale_version, None)
-        result = "MISS"
-
-    if memory_ids:
-        # Usage tracking writes last_used_at, which is not part of memory_version.
-        await store.touch_memories(memory_ids)
-
     turns: list[dict[str, Any]] = []
     try:
-        turn_limit = int(os.getenv("CONTEXT_TURN_LIMIT", "20"))
+        turn_limit = int(os.getenv("CONTEXT_TURN_LIMIT", "6"))
         turns = await store.get_recent_messages(
             limit=turn_limit, exclude_session_id=exclude_session_id
         )
@@ -423,10 +351,9 @@ async def build_system_instruction(
             session_id=exclude_session_id,
         )
 
-    instruction = _format_system_instruction(memory_block, turns, answer_length)
+    instruction = _format_system_instruction(turns, answer_length)
     logger.info(
-        f"Context cache {result} (version={version}, hits={_context_cache_hits}, "
-        f"misses={_context_cache_misses}, "
+        f"Built course-only voice context ({len(turns)} recent turns, "
         f"{(time.perf_counter() - started) * 1000:.0f}ms)"
     )
     return instruction

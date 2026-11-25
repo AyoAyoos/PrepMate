@@ -11,12 +11,23 @@ export type Citation = {
   distance_score: number;
 };
 
+export type AnswerLength = "short" | "long";
+
+export type ChatTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 export type AskResponse = {
   answer: string;
   grounded: boolean;
   citations: Citation[];
   /** Explanation, e.g. why the model refused. */
   note: string;
+  /** "course-overview" means the answer came from the DB course catalogue. */
+  source?: "rag" | "course-overview";
+  documents?: { source: string; chunks: number }[];
+  topics?: string[];
 };
 
 export type StoredDocument = {
@@ -61,11 +72,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-/** POST /ask */
-export async function askQuestion(question: string): Promise<AskResponse> {
+/** POST /ask — `history` only helps resolve follow-ups; answers stay course-grounded. */
+export async function askQuestion(
+  question: string,
+  answerLength: AnswerLength = "short",
+  history: ChatTurn[] = [],
+): Promise<AskResponse> {
   return request<AskResponse>("/ask", {
     method: "POST",
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, answer_length: answerLength, history }),
   });
 }
 

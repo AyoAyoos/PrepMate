@@ -45,20 +45,24 @@ def _dedupe_top_k(pairs: list, k: int) -> list:
     return out
 
 
-def retrieve(query: str, k: int = RETRIEVE_K) -> list:
+def retrieve(query: str, k: int = RETRIEVE_K, rewrite: bool = True) -> list:
     """Return the top-k distinct documents most similar to the query.
 
     Scores are DuckDB cosine distances (lower = more similar). generate() uses
     them as the relevance gate, so keep the raw distance rather than inverting
     it into a similarity percentage.
+
+    Set `rewrite=False` when the caller already produced a standalone question
+    (e.g. from chat history) to avoid a second rewrite round-trip to Ollama.
     """
     embeddings = _embeddings()
     fetch_k = k * 3  # over-fetch so de-duplication still leaves k distinct chunks
 
     queries = [query]
-    rewritten = rewrite_query(query)
-    if rewritten and rewritten != query.strip():
-        queries.append(rewritten)
+    if rewrite:
+        rewritten = rewrite_query(query)
+        if rewritten and rewritten != query.strip():
+            queries.append(rewritten)
 
     pairs: list[tuple[Document, float]] = []
     for text in queries:

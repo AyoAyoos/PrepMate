@@ -101,7 +101,7 @@ python -m src.api        # serves http://localhost:8000
 | Method | Path           | Purpose                                            |
 |--------|----------------|----------------------------------------------------|
 | GET    | `/documents`   | List source documents currently in the store       |
-| POST   | `/ask`         | Ask a question → grounded answer + citations       |
+| POST   | `/ask`         | Ask a question → grounded answer + citations; accepts `answer_length` and recent `history` for follow-ups, and returns DB-backed overviews for broad course questions |
 | POST   | `/ingest`      | Append a PDF (or clear + re-ingest) by filename    |
 | POST   | `/ingest/upload` | Upload one or more files (multipart) and index  |
 | DELETE | `/documents`   | Wipe the vector store                              |
@@ -109,6 +109,14 @@ python -m src.api        # serves http://localhost:8000
 | GET    | `/health`      | Liveness check                                     |
 
 Interactive docs (`swagger`) are at `http://localhost:8000/docs`.
+
+`POST /ask` accepts `{"question", "answer_length", "history"}`. `history` is a
+short list of `{"role": "user"|"assistant", "content"}` turns used only to rewrite
+follow-ups into standalone questions; it is never treated as course evidence.
+Broad questions such as “what is in my course?” are answered from the document
+catalogue in DuckDB and return `source: "course-overview"` with document and
+topic lists instead of a retrieval refusal. Long mode retrieves more chunks and
+requests a longer grounded answer; short mode caps the answer at four sentences.
 
 The frontend calls these endpoints through `Frontend/src/lib/api.ts`. If the API
 is not on `localhost:8000`, point the frontend at it with the `VITE_API_BASE`

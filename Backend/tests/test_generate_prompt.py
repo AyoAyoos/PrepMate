@@ -12,12 +12,14 @@ class AnswerLengthPromptTest(unittest.TestCase):
         prompt = build_prompt("What is NLP?", "context", "short")
         self.assertIn(LENGTH_RULES["short"], prompt)
         self.assertIn("2-4 complete sentences", prompt)
+        self.assertIn("hard maximum: 4", prompt)
 
     def test_long_rule_replaces_only_the_length_instruction(self) -> None:
         prompt = build_prompt("What is NLP?", "context", "long")
         self.assertIn(LENGTH_RULES["long"], prompt)
         self.assertIn("at least six complete sentences", prompt)
         self.assertNotIn("2-4 complete sentences", prompt)
+        self.assertNotIn("hard maximum: 4", prompt)
         # Grounding rules are unchanged.
         self.assertIn("ONLY from the provided course context", prompt)
         self.assertIn("NO outside knowledge", prompt)

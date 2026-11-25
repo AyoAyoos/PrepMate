@@ -43,7 +43,7 @@ export function AnswerLengthToggle({ value, onChange, disabled = false }: Answer
           className="h-6 px-2 text-[10px] font-black uppercase tracking-wider"
           aria-pressed={value === option}
           disabled={disabled}
-          title={disabled ? "Applies when the next call starts" : undefined}
+          title="Applies to typed answers now; voice calls use the choice made when they start"
           onClick={() => onChange(option)}
         >
           {option}
@@ -117,7 +117,7 @@ export function VoicePanel({
         <span className="text-[11px] font-black uppercase tracking-widest">Voice Assistant</span>
         <span className={`inline-block size-2 shrink-0 rounded-full ${dotClass}`} />
         <span className="text-xs font-bold">{statusLabel}</span>
-        <AnswerLengthToggle value={answerLength} onChange={onAnswerLengthChange} disabled={live} />
+        <AnswerLengthToggle value={answerLength} onChange={onAnswerLengthChange} />
         <Button
           variant={live ? "brutalOutline" : "brutal"}
           size="sm"
@@ -129,9 +129,10 @@ export function VoicePanel({
         </Button>
       </div>
       <p className="mt-1 text-[11px] font-semibold text-muted-foreground">
-        Transcripts appear in this chat. {answerLength.toUpperCase()} answers · course-only by
-        default · voice temperature {integration?.answer_policy?.voice_temperature ?? "—"}. Course
-        answers come from the same DuckDB + HNSW index as typed questions. {indexLabel}
+        Transcripts appear in this chat. {answerLength.toUpperCase()} applies to typed answers now
+        and to the next voice call · course-only · voice temperature{" "}
+        {integration?.answer_policy?.voice_temperature ?? "—"}. Course answers come from the same
+        DuckDB + HNSW index as typed questions. {indexLabel}
       </p>
       <audio ref={audioRef} autoPlay className="hidden" />
     </div>

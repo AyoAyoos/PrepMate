@@ -81,12 +81,15 @@ export function ChatMessage({ item }: { item: ChatItem }) {
   const { response } = item;
   const considered = !response.grounded && response.citations.length > 0;
   const hasSources = response.citations.length > 0;
+  const isOverview = response.source === "course-overview";
 
   return (
     <div className="max-w-[95%] border-2 border-foreground bg-card shadow-brutal sm:max-w-[80%]">
       <div className="flex items-center gap-2 border-b-2 border-foreground bg-secondary px-3 py-2">
         <Quote className="size-3.5" />
-        <span className="text-[11px] font-black uppercase tracking-widest">Syllabus Bot</span>
+        <span className="text-[11px] font-black uppercase tracking-widest">
+          {isOverview ? "Course Index" : "Syllabus Bot"}
+        </span>
         <span className="ml-auto">
           <GroundingBadge response={response} />
         </span>
@@ -103,6 +106,22 @@ export function ChatMessage({ item }: { item: ChatItem }) {
           <p className="border-l-4 border-primary bg-muted px-3 py-2 text-xs font-semibold text-muted-foreground">
             {response.note}
           </p>
+        )}
+
+        {!!response.topics?.length && (
+          <div className="border-t-2 border-dashed border-foreground/30 pt-3">
+            <p className="text-[11px] font-black uppercase tracking-widest">Indexed topics</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {response.topics.map((topic) => (
+                <span
+                  key={topic}
+                  className="border-2 border-foreground bg-secondary px-2 py-0.5 text-[11px] font-bold"
+                >
+                  {topic}
+                </span>
+              ))}
+            </div>
+          </div>
         )}
 
         {hasSources && (

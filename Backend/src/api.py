@@ -35,6 +35,7 @@ from src.config import (
 )
 from src.generate import UNANSWERABLE, generate
 from src.ingest import SUPPORTED_EXTS, clear_store, existing_hashes, file_sha1, ingest, list_sources
+from src.query import normalize_history, rewrite_query
 from src.retrieve import has_any_documents, retrieve
 from src.vectorstore import store
 
@@ -59,9 +60,21 @@ class Citation(BaseModel):
     distance_score: float = 0.0
 
 
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1)
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=1)
     answer_length: Literal["short", "long"] = "short"
+    # Recent chat turns, used only to turn follow-ups into standalone questions.
+    history: list[ChatTurn] = Field(default_factory=list)
+
+
+class CourseDocumentSummary(BaseModel):
+    source: str
+    chunks: int = 0
 
 
 class AskResponse(BaseModel):
@@ -69,6 +82,9 @@ class AskResponse(BaseModel):
     grounded: bool
     citations: list[Citation] = []
     note: str = ""
+    source: Literal["rag", "course-overview"] = "rag"
+    documents: list[CourseDocumentSummary] = []
+    topics: list[str] = []
 
 
 class StoredDocument(BaseModel):
@@ -104,6 +120,23 @@ def _chunk_counts_by_source() -> dict[str, int]:
 
 
 _OVERVIEW_TOPIC_RE = re.compile(r"(?:\b\d{1,2}\.|●)\s+([A-Z][^●○]{2,70})")
+
+# Broad "what is in my course?" questions have no single matching chunk, so
+# semantic retrieval would refuse them. Voice already routes these to the
+# DB-backed overview; typed chat uses the same rule through /ask.
+_OVERVIEW_QUESTION_RE = re.compile(
+    r"(?:what(?:'s|\s+is|\s+are)\s+(?:in\s+)?(?:my|the)\s+course\b)"
+    r"|(?:\b(?:what|which|list|show|tell|describe)\b.*\b(?:course|syllabus)\b.*"
+    r"\b(?:materials?|documents?|files?|topics?|subjects?|contents?|available|cover(?:ed|ing|s)?)\b)"
+    r"|(?:\b(?:topics?|subjects?|materials?|documents?|files?|contents?)\b.*\b(?:course|syllabus)\b)"
+    r"|(?:\b(?:course|syllabus)\s+(?:materials?|documents?|files?|contents?)\b)"
+    r"|(?:\b(?:what|which|list|show)\b.{0,40}\b(?:documents?|files?|materials?)\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_overview_question(question: str) -> bool:
+    return bool(_OVERVIEW_QUESTION_RE.search(question or ""))
 
 
 def _overview_topics(source: str) -> list[str]:
@@ -271,6 +304,31 @@ def ask_question(payload: AskRequest) -> AskResponse:
     if not question:
         raise HTTPException(status_code=422, detail="Question cannot be empty.")
 
+    # Resolve "tell me more about that" into a standalone course question before
+    # retrieval. Previous assistant text is context for the rewrite, never
+    # evidence for the final answer.
+    history = normalize_history([turn.model_dump() for turn in payload.history])
+    search_question = rewrite_query(question, history)
+
+    if _is_overview_question(question) or _is_overview_question(search_question):
+        overview = _course_overview(payload.answer_length)
+        return AskResponse(
+            answer=str(overview.get("answer", "")),
+            grounded=bool(overview.get("grounded")),
+            citations=[],
+            note=(
+                "Overview read directly from the indexed course documents. "
+                "Ask about a specific topic for a cited answer."
+                if overview.get("grounded")
+                else "No course documents are indexed yet. Ingest PDFs before asking."
+            ),
+            source="course-overview",
+            documents=[
+                CourseDocumentSummary(**doc) for doc in overview.get("documents", [])
+            ],
+            topics=[str(topic) for topic in overview.get("topics", [])],
+        )
+
     if not has_any_documents():
         return AskResponse(
             answer=UNANSWERABLE,
@@ -281,7 +339,7 @@ def ask_question(payload: AskRequest) -> AskResponse:
 
     try:
         k = RETRIEVE_K_LONG if payload.answer_length == "long" else RETRIEVE_K
-        retrieved = retrieve(question, k=k)
+        retrieved = retrieve(search_question, k=k, rewrite=False)
     except Exception as exc:  # e.g. Ollama / embedding service unavailable
         raise HTTPException(
             status_code=502,
@@ -297,7 +355,12 @@ def ask_question(payload: AskRequest) -> AskResponse:
         )
 
     try:
-        answer = generate(retrieved, question, answer_length=payload.answer_length)
+        answer = generate(
+            retrieved,
+            question,
+            answer_length=payload.answer_length,
+            resolved_question=search_question,
+        )
     except Exception as exc:  # e.g. Ollama chat model unavailable
         raise HTTPException(
             status_code=502,

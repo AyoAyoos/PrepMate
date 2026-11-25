@@ -74,7 +74,7 @@ To design and implement a reliable question-answering system that helps students
 | --- | --- | --- |
 | Frontend | React 19, TypeScript, TanStack Start/Router, Tailwind CSS 4, Vite 8 | Chat UI, document sidebar, ingest dialog, theme toggle, inline WebRTC voice strip, Short/Long selector |
 | Backend | Python 3.12, FastAPI, LangChain loaders, Ollama, DuckDB, HNSW | Document ingestion, query rewrite, retrieval, grounded generation, citations, broad-course overview |
-| Voice service | Python 3.12, FastAPI, vendored Pipecat, aiortc, WebRTC | Signaling, backend selection, tool calling, transcript persistence, post-call memory extraction |
+| Voice service | Python 3.12, FastAPI, vendored Pipecat, aiortc, WebRTC | Signaling, backend selection, course-only tool calling, transcript persistence, post-call memory extraction |
 | Local models | `nomic-embed-text`, `qwen2.5:3b-instruct`, faster-whisper `small.en`, Piper `en_US-lessac-medium` | Embeddings, course generation / voice phrasing, speech recognition, speech synthesis |
 | Optional cloud | Gemini Live `gemini-3.8-live`, Gemini Flash Lite for memory | Speech-to-speech conversation and post-call memory distillation |
 | Storage | `Backend/vectorstore/course.duckdb`, `VoiceAssistant/data/voice_assistant.duckdb` | Course chunks + HNSW index; sessions, transcripts, memories, reminders, errors |
@@ -97,20 +97,21 @@ To design and implement a reliable question-answering system that helps students
 ### 4.3 RAG pipeline
 
 1. **Ingestion.** Supported files are loaded, split into chunks of 1000 characters with 100-character overlap, embedded, and written to DuckDB. Files are deduplicated by filename plus streaming SHA-1 content hash.
-2. **Retrieval.** The question is rewritten, embedded, and searched against the HNSW index. Short mode uses `RETRIEVE_K` (configured as `4` here; default `5`), while Long mode uses `RETRIEVE_K_LONG=9`.
+2. **Retrieval.** The question is rewritten into a standalone query (using recent chat turns for follow-ups), embedded, and searched against the HNSW index. Short mode uses `RETRIEVE_K` (configured as `4` here; default `5`), while Long mode uses `RETRIEVE_K_LONG=9`.
 3. **Filtering.** Chunks worse than `MAX_DISTANCE=0.40` cosine distance are discarded before generation. Duplicate chunks are collapsed. Embedded practice/exam prompts are filtered unless the user explicitly asks about that exercise.
 4. **Neighbour expansion.** Nearby chunks are added as context only; they are not cited. Short mode uses `NEIGHBOR_TOP_N=2`; Long mode uses `NEIGHBOR_TOP_N_LONG=4`.
-5. **Generation.** A system prompt requires the model to answer only from the provided context. Short mode requests 2–4 sentences; Long mode requests at least six covering definition, purpose, mechanism, distinctions, example, and summary.
+5. **Generation.** A system prompt requires the model to answer only from the provided context. Short mode enforces a hard maximum of 4 sentences with a 220-token cap; Long mode requests at least six covering definition, purpose, mechanism, distinctions, example, and summary with a 1200-token cap.
 6. **Output gate.** A fixed refusal marker is detected on generation output, and citations are formatted from the kept chunks only.
 
 ### 4.4 Answer length routing
 
 | Path | Short | Long |
 | --- | --- | --- |
-| Frontend | Header/inline toggle sends `call_context_vars.answer_length = "short"` | Sends `"long"` |
+| Frontend (typed) | Header/inline toggle sends `POST /ask {answer_length: "short"}` | Sends `"long"`; takes effect on the next typed answer |
+| Frontend (voice) | Toggle sends `call_context_vars.answer_length = "short"` at call start | Sends `"long"` at call start |
 | Voice prompt | One or two spoken sentences with the key fact | Six to ten spoken sentences with depth |
 | Voice tool | `syllabus_search` receives UI-selected length | Spoken “make it long” can also override |
-| Backend `/ask` | `num_predict=400`, `k=4/5` | `num_predict=1200`, `k=9` |
+| Backend `/ask` | `num_predict=220`, `k=4/5` | `num_predict=1200`, `k=9` |
 | Voice token cap | `200` | `900` |
 | Overview endpoint | `detail=short` — document names only | `detail=long` — document names plus topic headings |
 
@@ -119,8 +120,9 @@ To design and implement a reliable question-answering system that helps students
 - WebRTC signaling receives the offer payload and reads `call_context_vars.answer_length`.
 - `start_pipeline()` normalizes the value and injects an **ANSWER LENGTH** block into the system instruction.
 - The same value is bound into the `syllabus_search` tool handler, so the backend receives the selected depth.
-- Course questions call `syllabus_search` first. Broad “what is in my course?” questions route to the DB-backed `/course/overview` endpoint.
-- The voice prompt forbids filling course gaps with the model’s own knowledge. Outside information is used only for non-course questions, or when the user explicitly asks for it, and must be labelled as outside the course.
+- The only registered tools are `syllabus_search` and `end_conversation`. Course questions call `syllabus_search`; broad “what is in my course?” questions route to the DB-backed `/course/overview` endpoint. Web, memory, time, reminder, system, and coding tools are not exposed.
+- Typed chat uses the same rules inside `POST /ask`: recent turns resolve follow-ups into standalone questions, and broad course questions return the DB-backed overview with `source: "course-overview"`. Previous assistant messages are context for rewriting only, never evidence.
+- Voice is course-only. Recent turns are used only to resolve follow-ups; saved memories are never injected. Any question outside the course is refused with exactly: “I can only answer questions from the course material. Ask me something about the course.”
 - `/api/integration/status` exposes the current policy: `course_only: true`, `voice_temperature`, backend reachability, HNSW status, and chunk count.
 
 ### 4.6 Prompt excerpt

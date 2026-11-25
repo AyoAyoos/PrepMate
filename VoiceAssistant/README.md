@@ -1,15 +1,18 @@
 # Voice Assistant
 
-A standalone, local-first browser voice assistant. Microphone audio travels over WebRTC to a small FastAPI server, and a vendored Pipecat pipeline streams it to **Gemini Live** for a natural speech-to-speech reply. If Gemini is unreachable, the same call transparently falls back to a fully local stack (faster-whisper STT + Ollama chat model + Piper TTS), and the assistant says "I'm offline, using local models." once. Calls, transcripts, distilled memory, and error logs are persisted locally in DuckDB; embeddings come from local Ollama. The assistant has real tools — live web search, page reading, memory search, time/date, reminders, and system info — shared by both backends.
+A standalone, local-first browser voice assistant. Microphone audio travels over WebRTC to a small FastAPI server, and a vendored Pipecat pipeline streams it to **Gemini Live** for a natural speech-to-speech reply. If Gemini is unreachable, the same call transparently falls back to a fully local stack (faster-whisper STT + Ollama chat model + Piper TTS), and the assistant says "I'm offline, using local models." once. In this PrepMate bundle the assistant is **course-only**: its only information tool is `syllabus_search`, which reads PrepMate's shared course index. Calls, transcripts, and error logs are persisted locally in DuckDB; embeddings come from local Ollama.
 
 This folder is self-contained. It is the Voice Assistant codebase bundled into the
 PrepMate workspace as a third subproject alongside `Backend/` and `Frontend/`.
 
 ## PrepMate integration (this bundle)
 
-- `syllabus_search` is an additional voice tool. For course questions it calls
+- `syllabus_search` is the only information tool. For course questions it calls
   `PREPMATE_API_BASE/ask` (default `http://127.0.0.1:8000`) and speaks PrepMate's
   grounded answer with its citations. No API key is needed for this tool.
+- Questions outside the course are refused with exactly: "I can only answer
+  questions from the course material. Ask me something about the course." No web,
+  memory, time, reminder, system, or coding tools are exposed in this bundle.
 - `GET /api/integration/status` reports whether PrepMate is reachable and that its
   `/course-index/status` endpoint is backed by DuckDB with HNSW enabled.
 - CORS allows local PrepMate dev origins, and `VoiceAssistant/.env` uses port
@@ -29,9 +32,8 @@ Only the two BSD-2-Clause `LICENSE` files and the preserved per-file copyright h
 - **One hotkey, zero clicks:** the backend is kept warm 100% of the time; `Ctrl + ;` only toggles a compact always-on-top panel and starts/stops the call. The first press is instant.
 - **Natural speech-to-speech:** Gemini Live owns STT, LLM and TTS, including barge-in interruption and a graceful spoken goodbye before disconnect. Each call opens a fresh Gemini session — the microphone is not held open between calls.
 - **Offline fallback:** `VOICE_BACKEND=auto` runs a fast Gemini reachability preflight per call; if it fails, the call runs entirely on local models and announces the switch once.
-- **Real tools:** `syllabus_search` through PrepMate's RAG API, web search (`web_search`, `fetch_page`) via backend-only Tavily (optional Brave fallback), `memory_search`, `get_current_time`, reminder store/recall, `get_system_info`, and `end_conversation` — identical on both backends.
-- **Voice-controlled coding bridge:** `code_task`, `list_code_sessions`, `recap_code_session`, and `code_permission_reply` drive the already-running loopback OpenCode service in isolated git worktrees, with spoken summaries, resumable short codes, and yes/no approvals. No second coding agent is started.
-- **Memory across calls:** durable facts are distilled after each call, embedded locally and injected into the next session's prompt, with recent turns kept for continuity.
+- **Course-only tools:** `syllabus_search` through PrepMate's RAG API and `end_conversation` — identical on both backends. Web, memory, time, reminder, system, and coding tools are not exposed in this PrepMate bundle.
+- **Course-only follow-ups:** a few recent turns are kept only to resolve references such as “tell me more about that”; saved memories are never injected as course evidence.
 - **Local storage and search:** one DuckDB file holds voice sessions, transcripts, memory vectors, reminders and errors; HNSW cosine search falls back to exact/keyword search when Ollama or `vss` is unavailable. Course knowledge lives in PrepMate's shared DuckDB + HNSW course index and is reached only via `/ask`.
 - **Full-page UI:** neubrutalist React interface with live status, waveform, transcript, and a History & Memory drawer.
 - **Observable:** structured ERROR logs, a DuckDB error table, launcher logs with phase timings, and browser error reporting through one endpoint.
@@ -61,7 +63,7 @@ flowchart LR
     Observer["TranscriptBridge<br/>pipeline observer<br/>state + transcript events"]
     Gemini["Gemini Live API<br/>speech-to-speech<br/>server-side VAD"]
     Local["Local fallback<br/>faster-whisper STT<br/>Ollama chat LLM<br/>Piper TTS"]
-    Tools["Shared tools<br/>web_search / fetch_page<br/>memory / time / reminders"]
+    Tools["Course-only tools<br/>syllabus_search / end_conversation"]
     Tavily["Tavily API<br/>backend-only key"]
     DB[("DuckDB<br/>sessions / messages / memory<br/>reminders / HNSW / app_errors")]
     Ollama["Local Ollama<br/>nomic-embed-text<br/>768-dim embeddings"]
@@ -95,6 +97,8 @@ flowchart LR
     Tools -- "short codes, recaps, approval state" --> Note
     Note -- "resume anchors and prior context" --> Tools
 ```
+
+The diagram above also names generic upstream nodes (Tavily, reminders, OpenCode worktrees). In this PrepMate bundle those nodes are **disabled**: no web, memory, time, reminder, system-info, or coding tool is registered on either backend.
 
 Per-call backend selection (`VOICE_BACKEND`): `auto` preflights Gemini and uses the local stack when it is unreachable, `gemini` forces Gemini Live, `local` always uses local models.
 
@@ -158,7 +162,7 @@ The PrepMate UI exposes a **Short / Long** selector next to the Voice button. It
 - the voice model's system instruction (one or two spoken sentences for Short, six to ten for Long), and
 - PrepMate `/ask`'s generation prompt (2–4 sentences for Short, 6–10 for Long, with more retrieved chunks for depth).
 
-Long mode raises the local voice model's token cap from 200 to 900. Course facts remain **course-only**: `/ask` runs at temperature `0.0` and the voice prompt forbids filling gaps from its own knowledge. The speaking model's phrasing temperature is `VOICE_LLM_TEMPERATURE` (default `0.7`). Outside information is used only for non-course questions, or for course questions when the user explicitly asks for outside context (then it must be labelled as such).
+Long mode raises the local voice model's token cap from 200 to 900. Voice answers are **course-only**: `/ask` runs at temperature `0.0`, the voice prompt forbids filling gaps from its own knowledge, and non-course questions get the exact refusal line. The speaking model's phrasing temperature is `VOICE_LLM_TEMPERATURE` (default `0.7`) and applies only to how course results are spoken.
 
 ## Tools
 
@@ -167,15 +171,9 @@ One set of function schemas with attached handlers is built per call and registe
 | Tool | What it does |
 | --- | --- |
 | `syllabus_search` | Calls PrepMate `/ask` (or `/course/overview` for broad questions) using the shared DuckDB + HNSW index. Passes the selected `short`/`long` answer length. |
-| `web_search` | Live web search for current/changing facts (Tavily, with optional Brave fallback). |
-| `fetch_page` | Reads the text of a specific URL when a snippet is not enough. |
-| `memory_search` | Searches saved long-term facts via HNSW + keyword fallback. |
-| `get_current_time` | Current local time/date or a named IANA timezone. |
-| `store_reminder` / `list_reminders` / `complete_reminder` | Store, recall and mark reminders done — **storage only, no scheduling or notification**. |
-| `get_system_info` | Basic local OS/CPU/hostname/backend info. |
 | `end_conversation` | Says goodbye, then queues a graceful `EndFrame`. |
 
-Tavily keys are read from `.env` on the backend only. They never appear in React code, tool results, the browser, logs, or docs. Set `TAVILY_API_KEY` for web tools; `BRAVE_API_KEY` is an optional fallback used only when a Tavily call fails. If neither is configured, web tools return a graceful "unavailable" result and the assistant says it could not check right now.
+No other tool is registered in this PrepMate bundle. Web-search keys (`TAVILY_API_KEY`, `BRAVE_API_KEY`) are ignored because web tools are not exposed; every non-course question is refused with the course-only line.
 
 ## Setup and run
 
@@ -261,16 +259,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\voice-assistant\scrip
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Local Ollama service |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Local embedding model |
 | `EMBEDDING_DIM` | `768` | Embedding vector width |
-| `MEMORY_MODEL` | `gemini-flash-lite-latest` | Post-call fact extraction model |
-| `MEMORY_CONTEXT_LIMIT` | `20` | Memories injected into each call |
-| `CONTEXT_TURN_LIMIT` | `20` | Older turns injected into each call |
-| `CONTEXT_CACHE_TTL_SECONDS` | `300` | Reuse formatted memory context between calls |
+| `MEMORY_MODEL` | `gemini-flash-lite-latest` | Post-call fact extraction model (unused for answers in this bundle) |
+| `MEMORY_CONTEXT_LIMIT` | `20` | Unused in this bundle; memories are not injected into voice answers |
+| `CONTEXT_TURN_LIMIT` | `6` | Recent turns injected only to resolve course follow-ups |
+| `CONTEXT_CACHE_TTL_SECONDS` | `300` | Legacy setting; memory context is no longer injected |
 | `EMBEDDING_CACHE_MAX_ENTRIES` | `512` | In-memory Ollama embedding LRU size |
 | `EMBEDDING_CACHE_TTL_SECONDS` | `3600` | Ollama embedding cache lifetime |
 | `NETWORK_WAIT_SECONDS` | `10` | Brief DNS wait/retry before opening Gemini Live |
 | `VOICE_BACKEND` | `auto` | `auto`, `gemini`, or `local` backend selection |
-| `TAVILY_API_KEY` | empty | Backend-only Tavily key for `web_search` / `fetch_page` |
-| `BRAVE_API_KEY` | empty | Optional Brave fallback when a Tavily call fails |
+| `TAVILY_API_KEY` | empty | Unused in this bundle; web tools are not registered |
+| `BRAVE_API_KEY` | empty | Unused in this bundle; web tools are not registered |
 | `LOCAL_STT_MODEL` | `small.en` | faster-whisper model for offline STT |
 | `LOCAL_LLM_MODEL` | `qwen2.5:3b-instruct` | Ollama chat model for offline LLM |
 | `LOCAL_LLM_TEMPERATURE` | `0.7` | Legacy sampling temperature for the local fallback LLM (0–2) |

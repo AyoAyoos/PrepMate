@@ -7,7 +7,7 @@ import { DocumentList } from "@/components/syllabus/DocumentList";
 import { IngestPanel } from "@/components/syllabus/IngestPanel";
 import { ThinkingIndicator } from "@/components/syllabus/ThinkingIndicator";
 import { AnswerLengthToggle, VoicePanel } from "@/components/voice/VoicePanel";
-import { askQuestion, getStoredDocuments, type StoredDocument } from "@/lib/api";
+import { askQuestion, getStoredDocuments, type ChatTurn, type StoredDocument } from "@/lib/api";
 import type { VoiceAnswerLength } from "@/lib/voice";
 import { useVoiceCall, type VoiceTranscript } from "@/lib/useVoiceCall";
 
@@ -32,10 +32,28 @@ export const Route = createFileRoute("/")({
 });
 
 const SUGGESTIONS = [
-  "How does retrieval-augmented generation work in this course?",
-  "When is the final exam date?",
+  "What's in my course?",
+  "What is morphology?",
+  "Explain semantic analysis with examples",
+  "What is stopword removal?",
   "What is the weather in Paris?",
 ];
+
+/** Recent turns let the backend resolve "tell me more about that" follow-ups. */
+function buildHistory(items: ChatItem[]): ChatTurn[] {
+  return items.slice(-8).flatMap((item): ChatTurn[] => {
+    if (item.role === "user" || item.role === "voice-user") {
+      return [{ role: "user", content: item.text }];
+    }
+    if (item.role === "bot") {
+      return [{ role: "assistant", content: item.response.answer }];
+    }
+    if (item.role === "voice-bot") {
+      return [{ role: "assistant", content: item.text }];
+    }
+    return [];
+  });
+}
 
 function Index() {
   const [items, setItems] = useState<ChatItem[]>([]);
@@ -96,7 +114,7 @@ function Index() {
       ...prev.map((i) => (i.role === "bot" ? { ...i, fresh: false } : i)),
       { id: crypto.randomUUID(), role: "user", text: q },
     ]);
-    const res = await askQuestion(q);
+    const res = await askQuestion(q, answerLength, buildHistory(items));
     setItems((prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: "bot", response: res, fresh: true },
@@ -142,11 +160,7 @@ function Index() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <AnswerLengthToggle
-              value={answerLength}
-              onChange={setAnswerLength}
-              disabled={voiceActive}
-            />
+            <AnswerLengthToggle value={answerLength} onChange={setAnswerLength} />
             <Button variant={voiceActive ? "brutal" : "brutalOutline"} onClick={toggleVoice}>
               <Mic className="size-4" />
               <span className="hidden sm:inline">{voiceActive ? "Voice on" : "Voice"}</span>
@@ -181,7 +195,9 @@ function Index() {
                   </h2>
                   <p className="mt-2 text-sm font-medium text-muted-foreground">
                     Type a question or turn on Voice — both use the same DuckDB + HNSW course index.
-                    When the retrieved context is weak, the bot refuses instead of guessing.
+                    Short/Long changes typed answers immediately and is applied to the next voice
+                    call. Follow-ups keep the recent chat context, and broad course questions read
+                    the document catalogue directly.
                   </p>
                   <div className="mt-4 flex flex-wrap gap-2">
                     {SUGGESTIONS.map((s) => (

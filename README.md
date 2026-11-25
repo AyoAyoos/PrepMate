@@ -63,18 +63,24 @@ the Piper voice and Ollama models are reused from your local cache.
    call strip inside the chat column. It uses WebRTC signaling directly against
    `http://127.0.0.1:45124` — no dialog, popup, or iframe. Spoken turns are added
    to the same message list as typed questions.
-2. **Voice → RAG:** the agent has a `syllabus_search` tool. For course-related
-   questions it POSTs to `PREPMATE_API_BASE/ask`, then speaks the grounded answer.
-   The backend serves both chat and voice from `Backend/vectorstore/course.duckdb`
-   with a cosine HNSW index; the voice process has no course-file access.
-3. **Answer depth:** the header **Short / Long** selector changes both the voice
-   prompt and `/ask`'s generation prompt. Long mode retrieves more chunks and
+2. **Voice → RAG:** the agent has one information tool, `syllabus_search`. For
+   course-related questions it POSTs to `PREPMATE_API_BASE/ask`, then speaks the
+   grounded answer. Questions outside the course are refused. The backend serves
+   both chat and voice from `Backend/vectorstore/course.duckdb` with a cosine HNSW
+   index; the voice process has no course-file access.
+3. **Answer depth:** the header **Short / Long** selector changes typed answers
+   immediately (`POST /ask` gets `answer_length`) and is applied to the next voice
+   call. Long mode retrieves more chunks, requests at least six sentences, and
    raises the voice token cap from 200 to 900. Course facts stay course-only
    (`/ask` temperature `0.0`); the speaking model's phrasing temperature is
    `VOICE_LLM_TEMPERATURE` (default `0.7`).
-4. **Fallbacks:** with a Gemini key the agent uses Gemini Live. Without one it uses
-   local Whisper (STT), Ollama (LLM) and Piper (TTS). Web search remains optional
-   and needs `TAVILY_API_KEY`.
+4. **Chat context:** typed chat sends the last few turns so “tell me more about
+   that” is rewritten into a standalone question. Broad “what is in my course?”
+   questions return a DB-backed course overview instead of a retrieval refusal.
+5. **Fallbacks:** with a Gemini key the agent uses Gemini Live. Without one it uses
+   local Whisper (STT), Ollama (LLM) and Piper (TTS). Voice is course-only in both
+   modes: web, memory, time, reminder, and coding tools are not exposed, and
+   non-course questions get a fixed refusal.
 
 ## Ports
 

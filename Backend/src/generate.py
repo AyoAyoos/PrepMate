@@ -54,6 +54,27 @@ USER_TASK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Length rules are kept separate from the grounding rules so a caller (typed
+# chat or voice) can choose depth without ever loosening the course-only rule.
+# The short rule is deliberately explicit: the local model otherwise drifts to
+# six or more sentences even when asked for two to four.
+SHORT_RULE = (
+    "4. Answer in 2-4 complete sentences (hard maximum: 4). Define the term, "
+    "then add one example or key distinction only if the context states it. "
+    "Never reply with just the term. Stop after the fourth sentence: do not add "
+    "background, a recap, or a summary sentence."
+)
+LONG_RULE = (
+    "4. Give a thorough explanation of at least six complete sentences. "
+    "Cover, in order: the definition; why the topic matters; how it works; "
+    "the key distinctions or caveats stated in the context; an example the "
+    "context gives; and one closing sentence tying them together. Do not "
+    "collapse these into a short summary. Use every relevant part of the "
+    "context, but never add facts, numbers or claims that are not in it. "
+    "Do not summarise embedded practice problems, exam prompts or slide "
+    "instructions."
+)
+
 SYSTEM_PROMPT = (
     "You are a study assistant that answers questions ONLY from the provided "
     "course context. Follow these rules in order:\n"
@@ -62,9 +83,7 @@ SYSTEM_PROMPT = (
     f'"{REFUSAL_MARKER}" — do not hedge into a partial guess.\n'
     "3. The question may be a fragment or contain typos (e.g. \"what noun\"); "
     "read it as the obvious course term and answer that.\n"
-    "4. Answer in 2-4 complete sentences: define the term, then add an example "
-    "or key distinction only if the context states one. Never reply with just "
-    "the term.\n"
+    f"{SHORT_RULE}\n"
     "5. Keep the context's wording and distinctions (if it says \"both X and Y\", "
     "do not write \"X or Y\"). Do not add numbers, examples or claims that are "
     "not in the context.\n"
@@ -90,34 +109,13 @@ CONSIDERED_REFUSAL = (
 
 # Length rules are kept separate from the grounding rules so a caller (typed
 # chat or voice) can choose depth without ever loosening the course-only rule.
-LENGTH_RULES = {
-    "short": (
-        "4. Answer in 2-4 complete sentences: define the term, then add an "
-        "example or key distinction only if the context states one. Never reply "
-        "with just the term."
-    ),
-    "long": (
-        "4. Give a thorough explanation of at least six complete sentences. "
-        "Cover, in order: the definition; why the topic matters; how it works; "
-        "the key distinctions or caveats stated in the context; an example the "
-        "context gives; and one closing sentence tying them together. Do not "
-        "collapse these into a short summary. Use every relevant part of the "
-        "context, but never add facts, numbers or claims that are not in it. "
-        "Do not summarise embedded practice problems, exam prompts or slide "
-        "instructions."
-    ),
-}
+LENGTH_RULES = {"short": SHORT_RULE, "long": LONG_RULE}
 
 
 def build_prompt(question: str, context: str, answer_length: str = "short") -> str:
     """Assemble the system + context + question prompt for the chosen depth."""
     rule = LENGTH_RULES[answer_length if answer_length in LENGTH_RULES else "short"]
-    system = SYSTEM_PROMPT.replace(
-        "4. Answer in 2-4 complete sentences: define the term, then add an example "
-        "or key distinction only if the context states one. Never reply with just "
-        "the term.",
-        rule,
-    )
+    system = SYSTEM_PROMPT.replace(SHORT_RULE, rule)
     # The short-answer example anchors llama3.2 to two sentences. Long answers
     # drop it so the model follows the depth instruction instead.
     if answer_length == "long":
@@ -145,15 +143,24 @@ def _get_llm(answer_length: str = "short") -> OllamaLLM:
         base_url=OLLAMA_HOST,
         model=OLLAMA_LLM_MODEL,
         temperature=0.0,
-        num_predict=1200 if answer_length == "long" else 400,
+        # A short answer is roughly 80 tokens; the tighter cap is a second
+        # guard against the local model ignoring the four-sentence rule.
+        num_predict=1200 if answer_length == "long" else 220,
     )
 
 
-def generate(retrieved: list, question: str, answer_length: str = "short") -> Answer:
+def generate(
+    retrieved: list,
+    question: str,
+    answer_length: str = "short",
+    resolved_question: str | None = None,
+) -> Answer:
     """Generate an answer from the retrieved (document, score) pairs.
 
     Layer (a): chunks beyond MAX_DISTANCE are discarded BEFORE the LLM runs.
     `answer_length` only changes depth, never the course-only grounding rules.
+    `resolved_question` is the standalone form produced from chat history, so
+    follow-ups such as "tell me more" do not need another rewrite round-trip.
     """
     if answer_length not in LENGTH_RULES:
         answer_length = "short"
@@ -164,7 +171,7 @@ def generate(retrieved: list, question: str, answer_length: str = "short") -> An
     if not kept:
         return Answer(text=UNANSWERABLE, grounded=False, note=NO_RETRIEVAL)
 
-    clean_question = rewrite_query(question)
+    clean_question = resolved_question or rewrite_query(question)
     # Embedded exam/practice prompts look highly relevant to a retrieval search
     # but are not explanatory facts. Keep them only when the user asks for that
     # exercise itself, otherwise the model tends to answer the slide's question.
