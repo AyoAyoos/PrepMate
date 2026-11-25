@@ -109,3 +109,31 @@ cd Frontend; npm install; npm run dev
 - [Backend/README.md](Backend/README.md) — ingestion, retrieval, evaluation.
 - [VoiceAssistant/README.md](VoiceAssistant/README.md) — voice pipeline, tools, memory.
 - [VoiceAssistant/SETUP.md](VoiceAssistant/SETUP.md) — local model setup and troubleshooting.
+
+For the end-to-end flow, detailed options, and evaluation, see
+[Backend/README.md](Backend/README.md).
+
+## Quick start (frontend)
+
+From `Frontend/`:
+
+```bash
+npm install        # or: bun install
+npm run dev        # starts the chat UI (Vite dev server)
+```
+
+Open the printed URL in a browser, add course documents via **Ingest** (top
+right), and ask questions in the chat. The UI talks to the backend at
+`http://localhost:8000` by default; if the API is served elsewhere, point the
+UI at it with the `VITE_API_BASE` env var:
+
+```bash
+VITE_API_BASE=http://localhost:8000 npm run dev
+```
+
+Other checks:
+
+```bash
+npm run lint       # ESLint
+npm run build      # production build
+```
